@@ -15,6 +15,12 @@
 #include <AggregateFunctions/IAggregateFunction.h>
 #include <base/logger_useful.h>
 
+#include <IO/WriteBuffer.h>
+#include <IO/WriteHelpers.h>
+#include <IO/ReadBuffer.h>
+#include <IO/ReadHelpers.h>
+#include <IO/VarInt.h>
+
 
 namespace DB
 {
@@ -82,22 +88,26 @@ public:
     void serialize(ConstAggregateDataPtr __restrict place, WriteBuffer & buf, std::optional<size_t> /* version */) const override
     {
         auto & values = this->data(place).values;
-        for (auto it = values.begin(); it != values.end(); it ++){
-            buf.write(it->first);
-            //buf.write(it->second);
+        writeVarUInt(values.size(), buf);
+        for (auto value : values){
+            writeVarUInt(value.first, buf);
+            writeVarUInt(value.second, buf);
         }
-        /*
-        this->data(place).value.write(buf);
-        */
     }
 
-    void deserialize(AggregateDataPtr __restrict /*place*/, ReadBuffer & /*buf*/, std::optional<size_t> /* version  */, Arena *) const override
+    void deserialize(AggregateDataPtr __restrict place, ReadBuffer & buf, std::optional<size_t> /* version  */, Arena *) const override
     {
-        /*
-        auto & set = this->data(place).value;
-        set.resize(reserved);
-        set.read(buf);
-        */
+        auto & values = this->data(place).values;
+        UInt64 length;
+        readVarUInt(length, buf);
+
+        while (length--){
+            UInt64 first = 0;
+            readVarUInt(first, buf);
+            UInt64 second = 0;
+            readVarUInt(second, buf);
+            values.insert({first, second});
+        }
     }
 
     void insertResultInto(AggregateDataPtr __restrict place, IColumn & to, Arena *) const override
@@ -119,10 +129,10 @@ public:
 };
 
 class AggregateFunctionGroupSortedArrayGeneric
-    : public IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<StringRef>, AggregateFunctionGroupSortedArrayGeneric>
+    : public IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<std::string>, AggregateFunctionGroupSortedArrayGeneric>
 {
 protected:
-    using State = AggregateFunctionGroupSortedArrayData<StringRef>;
+    using State = AggregateFunctionGroupSortedArrayData<std::string>;
     UInt64 threshold;
     DataTypePtr & input_data_type;
 
@@ -130,7 +140,7 @@ protected:
 
 public:
     AggregateFunctionGroupSortedArrayGeneric(UInt64 threshold_, UInt64 /*load_factor*/, const DataTypes & argument_types_, const Array & params)
-        : IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<StringRef>, AggregateFunctionGroupSortedArrayGeneric>(argument_types_, params)
+        : IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<std::string>, AggregateFunctionGroupSortedArrayGeneric>(argument_types_, params)
         , threshold(threshold_), input_data_type(this->argument_types[0]) {}
 
     String getName() const override { return "groupSortedArray"; }
@@ -144,61 +154,65 @@ public:
 
     void add(AggregateDataPtr __restrict place, const IColumn ** columns, size_t row_num, Arena *arena) const override
     {
-        auto & values = this->data(place).values;
-
         const char * begin = nullptr;
         StringRef str_serialized = columns[0]->serializeValueIntoArena(row_num, *arena, begin);
         auto v1 = columns[1]->getUInt(row_num);
-        values.insert({v1, str_serialized});
+        std::string v0 = str_serialized.toString();
+        add(place, v0, v1);
+        
         arena->rollback(str_serialized.size);
+    }
 
-        //auto v0 = columns[0]->getUInt(row_num);
-        //auto v1 = columns[1]->getUInt(row_num);
-        //values.insert({v1, v0});
-
+    inline void add(AggregateDataPtr __restrict place, const std::string &v0, const UInt64 &v1) const
+    {
+        auto & values = this->data(place).values;
+        values.insert({v1, v0});
         while (values.size()>threshold)
             values.erase(--values.end());
      
         static Poco::Logger * log = &Poco::Logger::get("MergeTreeSequentialSource");
         std::string dbg_map;
         for ( const auto &val : values){
-            dbg_map += "{ " + std::to_string(val.first) + ", " + val.second.toString() + " } ";
+            dbg_map += "{ " + std::to_string(val.first) + ", " + val.second + " } ";
         }
-        LOG_DEBUG(log, "Read column {} {} size:{} Map: {}", str_serialized.toString(), v1, values.size(), dbg_map.data());
+        LOG_DEBUG(log, "Read column {} {} size:{} Map: {}", v0, v1, values.size(), dbg_map.data());
     }
                                                                                                                                                                                                                                                                             
     void merge(AggregateDataPtr __restrict place, ConstAggregateDataPtr rhs, Arena *) const override
     {
-        auto & values = this->data(place).values;
         auto & values_external = this->data(rhs).values;
-        values.insert(values_external.begin(), values_external.end());
-
-        while (values.size()>threshold)
-            values.erase(--values.end());
+    
+        for (auto value : values_external){
+            add(place, value.second, value.first);
+        }
     }   
 
-    void serialize(ConstAggregateDataPtr __restrict /*place*/, WriteBuffer &/* buf*/, std::optional<size_t> /* version */) const override
-    {/*
-        auto & values = this->data(place).values;
-        for (auto it = values.begin(); it != values.end(); it ++){
-            buf.write(it->first);
-            //buf.write(it->second);
-        }*/
-        /*
-        this->data(place).value.write(buf);
-        */
-    }
-
-    void deserialize(AggregateDataPtr __restrict /*place*/, ReadBuffer & /*buf*/, std::optional<size_t> /* version  */, Arena *) const override
+    void serialize(ConstAggregateDataPtr __restrict place, WriteBuffer & buf, std::optional<size_t> /* version */) const override
     {
-        /*
-        auto & set = this->data(place).value;
-        set.resize(reserved);
-        set.read(buf);
-        */
+        auto & values = this->data(place).values;
+        writeVarUInt(values.size(), buf);
+        for (auto value : values){
+            writeVarUInt(value.first, buf);
+            writeBinary(value.second, buf);
+        }
     }
 
-    void insertResultInto(AggregateDataPtr __restrict place, IColumn &to, Arena *) const override
+    void deserialize(AggregateDataPtr __restrict place, ReadBuffer & buf, std::optional<size_t> /* version  */, Arena *) const override
+    {
+        auto & values = this->data(place).values;
+        UInt64 length;
+        readVarUInt(length, buf);
+
+        while (length--){
+            UInt64 first = 0;
+            readVarUInt(first, buf);
+            std::string second;
+            readBinary(second, buf);
+            values.insert({first, second});
+        }
+    }
+
+    void insertResultInto(AggregateDataPtr __restrict place, IColumn &to, Arena *arena) const override
     {
         ColumnArray & arr_to = assert_cast<ColumnArray &>(to);
         ColumnArray::Offsets & offsets_to = arr_to.getOffsets();
@@ -207,8 +221,12 @@ public:
         auto & values = this->data(place).values;
         offsets_to.push_back(offsets_to.back() + values.size());
 
-        for (auto it = values.begin(); it != values.end(); ++it)
-            data_to.deserializeAndInsertFromArena(it->second.data);
+        for (auto it = values.begin(); it != values.end(); ++it){
+            auto ptr = arena->alloc(it->second.size());
+            std::copy(it->second.data(), it->second.data() + it->second.length(), ptr);
+            StringRef str_serialized = StringRef{ptr, it->second.size()};
+            data_to.deserializeAndInsertFromArena(it->second.data());
+        }
     }
 };
 

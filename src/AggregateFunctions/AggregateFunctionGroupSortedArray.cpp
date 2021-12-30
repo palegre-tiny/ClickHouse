@@ -52,6 +52,7 @@ static IAggregateFunction * createWithExtraTypes(const DataTypes & argument_type
     if (which.idx == TypeIndex::DateTime)
         return new AggregateFunctionGroupSortedArrayDateTime(threshold, load_factor, argument_types, params);
 
+
     return new AggregateFunctionGroupSortedArrayGeneric(threshold, load_factor, argument_types, params);
 }
 
