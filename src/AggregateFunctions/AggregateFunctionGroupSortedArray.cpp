@@ -3,6 +3,7 @@
 #include <AggregateFunctions/Helpers.h>
 #include <AggregateFunctions/FactoryHelpers.h>
 #include <Common/FieldVisitorConvertToNumber.h>
+#include <DataTypes/DataTypeString.h>
 #include <DataTypes/DataTypeDate.h>
 #include <DataTypes/DataTypeDateTime.h>
 
@@ -26,6 +27,33 @@ namespace ErrorCodes
 
 namespace
 {
+
+/// Substitute return type for Date and DateTime
+class AggregateFunctionGroupSortedArrayDate : public AggregateFunctionGroupSortedArray<DataTypeDate::FieldType>
+{
+    using AggregateFunctionGroupSortedArray<DataTypeDate::FieldType>::AggregateFunctionGroupSortedArray;
+    DataTypePtr getReturnType() const override { return std::make_shared<DataTypeArray>(std::make_shared<DataTypeDate>()); }
+};
+
+class AggregateFunctionGroupSortedArrayDateTime : public AggregateFunctionGroupSortedArray<DataTypeDateTime::FieldType>
+{
+    using AggregateFunctionGroupSortedArray<DataTypeDateTime::FieldType>::AggregateFunctionGroupSortedArray;
+    DataTypePtr getReturnType() const override { return std::make_shared<DataTypeArray>(std::make_shared<DataTypeDateTime>()); }
+};
+
+static IAggregateFunction * createWithExtraTypes(const DataTypes & argument_types, UInt64 threshold, UInt64 load_factor, const Array & params)
+{
+    if (argument_types.empty())
+        throw DB::Exception(ErrorCodes::LOGICAL_ERROR, "Got empty arguments list");
+
+    WhichDataType which(argument_types[0]);
+    if (which.idx == TypeIndex::Date)
+        return new AggregateFunctionGroupSortedArrayDate(threshold, load_factor, argument_types, params);
+    if (which.idx == TypeIndex::DateTime)
+        return new AggregateFunctionGroupSortedArrayDateTime(threshold, load_factor, argument_types, params);
+
+    return new AggregateFunctionGroupSortedArrayGeneric(threshold, load_factor, argument_types, params);
+}
 
 AggregateFunctionPtr createAggregateFunctionGroupSortedArray(const std::string & name, const DataTypes & argument_types, const Array & params, const Settings *)
 {
@@ -66,6 +94,9 @@ AggregateFunctionPtr createAggregateFunctionGroupSortedArray(const std::string &
     AggregateFunctionPtr res(createWithNumericType<AggregateFunctionGroupSortedArray>(
         *argument_types[0], threshold, load_factor, argument_types, params));
 
+    if (!res)
+        res = AggregateFunctionPtr(createWithExtraTypes(argument_types, threshold, load_factor, params));
+ 
     if (!res)
         throw Exception("Illegal type " + argument_types[0]->getName() +
             " of argument for aggregate function " + name, ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);

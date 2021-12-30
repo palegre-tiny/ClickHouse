@@ -35,12 +35,11 @@ class AggregateFunctionGroupSortedArray
 protected:
     using State = AggregateFunctionGroupSortedArrayData<T>;
     UInt64 threshold;
-    UInt64 reserved;
 
 public:
     AggregateFunctionGroupSortedArray(UInt64 threshold_, UInt64 /*load_factor*/, const DataTypes & argument_types_, const Array & params)
         : IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T>, AggregateFunctionGroupSortedArray<T>>(argument_types_, params)
-        , threshold(threshold_), reserved(100/*load_factor * threshold*/) {}
+        , threshold(threshold_) {}
 
     String getName() const override { return "groupSortedArray"; }
 
@@ -54,13 +53,11 @@ public:
     void add(AggregateDataPtr __restrict place, const IColumn ** columns, size_t row_num, Arena *) const override
     {
         auto & values = this->data(place).values;
-//        if (set.capacity() != reserved)
-//            set.resize(reserved);
 
         auto v0 = columns[0]->getUInt(row_num);
         auto v1 = columns[1]->getUInt(row_num);
-        //assert_cast<const ColumnVector<T> &>(*columns[0]).getData()[row_num], columns[1]->getUInt(row_num)
         values.insert({v1, v0});
+
         while (values.size()>threshold)
             values.erase(--values.end());
      /*
@@ -72,16 +69,24 @@ public:
         LOG_DEBUG(log, "Read column {} {} size:{} Map: {}", v0, v1, values.size(), dbg_map.data());*/
     }
                                                                                                                                                                                                                                                                             
-    void merge(AggregateDataPtr __restrict /*place*/, ConstAggregateDataPtr /*rhs*/, Arena *) const override
-    {/*
-        auto & set = this->data(place).value;
-        if (set.capacity() != reserved)
-            set.resize(reserved);
-        set.merge(this->data(rhs).value);*/
+    void merge(AggregateDataPtr __restrict place, ConstAggregateDataPtr rhs, Arena *) const override
+    {
+        auto & values = this->data(place).values;
+        auto & values_external = this->data(rhs).values;
+        values.insert(values_external.begin(), values_external.end());
+
+        while (values.size()>threshold)
+            values.erase(--values.end());
     }   
 
-    void serialize(ConstAggregateDataPtr __restrict /*place*/, WriteBuffer & /*buf*/, std::optional<size_t> /* version */) const override
-    {/*
+    void serialize(ConstAggregateDataPtr __restrict place, WriteBuffer & buf, std::optional<size_t> /* version */) const override
+    {
+        auto & values = this->data(place).values;
+        for (auto it = values.begin(); it != values.end(); it ++){
+            buf.write(it->first);
+            //buf.write(it->second);
+        }
+        /*
         this->data(place).value.write(buf);
         */
     }
@@ -110,6 +115,100 @@ public:
         size_t i = 0;
         for (auto it = values.begin(); it != values.end(); ++it, ++i)
             data_to[old_size + i] = it->second;
+    }
+};
+
+class AggregateFunctionGroupSortedArrayGeneric
+    : public IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<StringRef>, AggregateFunctionGroupSortedArrayGeneric>
+{
+protected:
+    using State = AggregateFunctionGroupSortedArrayData<StringRef>;
+    UInt64 threshold;
+    DataTypePtr & input_data_type;
+
+    static void deserializeAndInsert(StringRef str, IColumn & data_to);
+
+public:
+    AggregateFunctionGroupSortedArrayGeneric(UInt64 threshold_, UInt64 /*load_factor*/, const DataTypes & argument_types_, const Array & params)
+        : IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<StringRef>, AggregateFunctionGroupSortedArrayGeneric>(argument_types_, params)
+        , threshold(threshold_), input_data_type(this->argument_types[0]) {}
+
+    String getName() const override { return "groupSortedArray"; }
+
+    DataTypePtr getReturnType() const override
+    {
+        return std::make_shared<DataTypeArray>(input_data_type);
+    }
+
+    bool allocatesMemoryInArena() const override { return true; }
+
+    void add(AggregateDataPtr __restrict place, const IColumn ** columns, size_t row_num, Arena *arena) const override
+    {
+        auto & values = this->data(place).values;
+
+        const char * begin = nullptr;
+        StringRef str_serialized = columns[0]->serializeValueIntoArena(row_num, *arena, begin);
+        auto v1 = columns[1]->getUInt(row_num);
+        values.insert({v1, str_serialized});
+        arena->rollback(str_serialized.size);
+
+        //auto v0 = columns[0]->getUInt(row_num);
+        //auto v1 = columns[1]->getUInt(row_num);
+        //values.insert({v1, v0});
+
+        while (values.size()>threshold)
+            values.erase(--values.end());
+     
+        static Poco::Logger * log = &Poco::Logger::get("MergeTreeSequentialSource");
+        std::string dbg_map;
+        for ( const auto &val : values){
+            dbg_map += "{ " + std::to_string(val.first) + ", " + val.second.toString() + " } ";
+        }
+        LOG_DEBUG(log, "Read column {} {} size:{} Map: {}", str_serialized.toString(), v1, values.size(), dbg_map.data());
+    }
+                                                                                                                                                                                                                                                                            
+    void merge(AggregateDataPtr __restrict place, ConstAggregateDataPtr rhs, Arena *) const override
+    {
+        auto & values = this->data(place).values;
+        auto & values_external = this->data(rhs).values;
+        values.insert(values_external.begin(), values_external.end());
+
+        while (values.size()>threshold)
+            values.erase(--values.end());
+    }   
+
+    void serialize(ConstAggregateDataPtr __restrict /*place*/, WriteBuffer &/* buf*/, std::optional<size_t> /* version */) const override
+    {/*
+        auto & values = this->data(place).values;
+        for (auto it = values.begin(); it != values.end(); it ++){
+            buf.write(it->first);
+            //buf.write(it->second);
+        }*/
+        /*
+        this->data(place).value.write(buf);
+        */
+    }
+
+    void deserialize(AggregateDataPtr __restrict /*place*/, ReadBuffer & /*buf*/, std::optional<size_t> /* version  */, Arena *) const override
+    {
+        /*
+        auto & set = this->data(place).value;
+        set.resize(reserved);
+        set.read(buf);
+        */
+    }
+
+    void insertResultInto(AggregateDataPtr __restrict place, IColumn &to, Arena *) const override
+    {
+        ColumnArray & arr_to = assert_cast<ColumnArray &>(to);
+        ColumnArray::Offsets & offsets_to = arr_to.getOffsets();
+        IColumn & data_to = arr_to.getData();
+
+        auto & values = this->data(place).values;
+        offsets_to.push_back(offsets_to.back() + values.size());
+
+        for (auto it = values.begin(); it != values.end(); ++it)
+            data_to.deserializeAndInsertFromArena(it->second.data);
     }
 };
 
