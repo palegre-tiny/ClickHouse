@@ -66,13 +66,6 @@ public:
 
         while (values.size()>threshold)
             values.erase(--values.end());
-     /*
-        static Poco::Logger * log = &Poco::Logger::get("MergeTreeSequentialSource");
-        std::string dbg_map;
-        for ( const auto &val : values){
-            dbg_map += "{ " + std::to_string(int(val.first)) + ", " + std::to_string(int(val.second)) + " } ";
-        }
-        LOG_DEBUG(log, "Read column {} {} size:{} Map: {}", v0, v1, values.size(), dbg_map.data());*/
     }
                                                                                                                                                                                                                                                                             
     void merge(AggregateDataPtr __restrict place, ConstAggregateDataPtr rhs, Arena *) const override
@@ -172,75 +165,8 @@ public:
         values.insert({weight, item});
         while (values.size()>threshold)
             values.erase(--values.end());
-     
-     /*
-        static Poco::Logger * log = &Poco::Logger::get("groupSortedArray::add");
-        std::string dbg_map;
-        for ( const auto &val : values){
-            dbg_map += "{ " + std::to_string(val.first) + ", " + val.second + " } ";
-        }
-        LOG_DEBUG(log, "Read column {} {} size:{} Map: {}", value, weight, values.size(), dbg_map.data());
-    */
-       // test_serialization(place);
-
     }
-/*
-    void test_serialization(ConstAggregateDataPtr place) const
-    {
-        //test serialization
-        char *memory = new char[1024*10];
-        WriteBuffer bufW(memory, 1024*10);
-        static Poco::Logger * log = &Poco::Logger::get("serializationTest");
-        std::string dbg_map;
-        {
-            auto & values = this->data(place).values;
-            writeVarUInt(values.size(), bufW);
-            LOG_DEBUG(log, "Write len: {}", values.size());
-            for (auto value : values){
-                LOG_DEBUG(log, "Write weigth: {}", value.first);
-                writeVarUInt(value.first, bufW);
 
-                std::string sec = value.second;
-                LOG_DEBUG(log, "Write item: {}", sec);
-                writeBinary(value.second, bufW);
-
-                dbg_map += "{ ";
-                dbg_map += std::to_string(value.first);
-                dbg_map += ", ";
-                dbg_map += sec;
-                dbg_map += " } ";
-            }
-
-            LOG_DEBUG(log, "Original values : {}", dbg_map.data());
-            LOG_DEBUG(log, "Buffer offset: {} count: {}", bufW.offset(), bufW.count());
-        }
-
-        bufW.finalize();
-
-        ReadBuffer bufR(memory, bufW.offset());
-        UInt64 length;
-        readVarUInt(length, bufR);
-        LOG_DEBUG(log, "Readed count: {} items", length);
-        std::map<int, std::string>values;
-        while (length--){
-            UInt64 first = 0;
-            readVarUInt(first, bufR);
-
-            LOG_DEBUG(log, "Readed weigth: {}", first);
-            std::string second;
-            readBinary(second, bufR);
-            LOG_DEBUG(log, "Readed item: {}", second);
-            values.insert({first, second});
-        }
-        
-        for ( const auto &val : values){
-            dbg_map += "{ " + std::to_string(val.first) + ", " + val.second.c_str() + " } ";
-        }
-        LOG_DEBUG(log, "Restored values : {}", dbg_map.data());
-
-        delete []memory;
-    }
-*/                                                                                                                                                                                                                                                             
     void merge(AggregateDataPtr __restrict place, ConstAggregateDataPtr rhs, Arena *) const override
     {
         auto & values_external = this->data(rhs).values;
