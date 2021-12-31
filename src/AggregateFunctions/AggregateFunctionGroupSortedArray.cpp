@@ -52,8 +52,14 @@ static IAggregateFunction * createWithExtraTypes(const DataTypes & argument_type
     if (which.idx == TypeIndex::DateTime)
         return new AggregateFunctionGroupSortedArrayDateTime(threshold, load_factor, argument_types, params);
 
-
-    return new AggregateFunctionGroupSortedArrayGeneric(threshold, load_factor, argument_types, params);
+    if (argument_types[0]->isValueUnambiguouslyRepresentedInContiguousMemoryRegion())
+    {
+        return new AggregateFunctionGroupSortedArrayGeneric<true>(threshold, load_factor, argument_types, params);
+    }
+    else
+    {
+        return new AggregateFunctionGroupSortedArrayGeneric<false>(threshold, load_factor, argument_types, params);
+    }    
 }
 
 AggregateFunctionPtr createAggregateFunctionGroupSortedArray(const std::string & name, const DataTypes & argument_types, const Array & params, const Settings *)
@@ -100,7 +106,7 @@ AggregateFunctionPtr createAggregateFunctionGroupSortedArray(const std::string &
  
     if (!res)
         throw Exception("Illegal type " + argument_types[0]->getName() +
-            " of argument for aggregate function " + name, ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
+            " of argument for aggregate function 4 " + name, ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
 
     return res;
 }

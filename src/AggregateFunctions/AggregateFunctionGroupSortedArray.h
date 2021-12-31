@@ -128,8 +128,9 @@ public:
     }
 };
 
-class AggregateFunctionGroupSortedArrayGeneric
-    : public IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<std::string>, AggregateFunctionGroupSortedArrayGeneric>
+template <bool is_plain_column> class AggregateFunctionGroupSortedArrayGeneric
+    : public IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<std::string>,
+                                          AggregateFunctionGroupSortedArrayGeneric<is_plain_column>>
 {
 protected:
     using State = AggregateFunctionGroupSortedArrayData<std::string>;
@@ -154,36 +155,98 @@ public:
 
     void add(AggregateDataPtr __restrict place, const IColumn ** columns, size_t row_num, Arena *arena) const override
     {
-        const char * begin = nullptr;
-        StringRef str_serialized = columns[0]->serializeValueIntoArena(row_num, *arena, begin);
-        auto v1 = columns[1]->getUInt(row_num);
-        std::string v0 = str_serialized.toString();
-        add(place, v0, v1);
-        
-        arena->rollback(str_serialized.size);
+        if constexpr (is_plain_column)
+            add(place, columns[0]->getDataAt(row_num).toString(), columns[1]->getUInt(row_num));
+        else
+        {
+            const char * begin = nullptr;
+            StringRef str_serialized = columns[0]->serializeValueIntoArena(row_num, *arena, begin);
+            add(place, str_serialized.toString(), columns[1]->getUInt(row_num));
+            arena->rollback(str_serialized.size);
+        }
     }
 
-    inline void add(AggregateDataPtr __restrict place, const std::string &v0, const UInt64 &v1) const
+    inline void add(AggregateDataPtr __restrict place, std::string item, const UInt64 &weight) const
     {
         auto & values = this->data(place).values;
-        values.insert({v1, v0});
+        values.insert({weight, item});
         while (values.size()>threshold)
             values.erase(--values.end());
      
-        static Poco::Logger * log = &Poco::Logger::get("MergeTreeSequentialSource");
+     /*
+        static Poco::Logger * log = &Poco::Logger::get("groupSortedArray::add");
         std::string dbg_map;
         for ( const auto &val : values){
             dbg_map += "{ " + std::to_string(val.first) + ", " + val.second + " } ";
         }
-        LOG_DEBUG(log, "Read column {} {} size:{} Map: {}", v0, v1, values.size(), dbg_map.data());
+        LOG_DEBUG(log, "Read column {} {} size:{} Map: {}", value, weight, values.size(), dbg_map.data());
+    */
+       // test_serialization(place);
+
     }
-                                                                                                                                                                                                                                                                            
+/*
+    void test_serialization(ConstAggregateDataPtr place) const
+    {
+        //test serialization
+        char *memory = new char[1024*10];
+        WriteBuffer bufW(memory, 1024*10);
+        static Poco::Logger * log = &Poco::Logger::get("serializationTest");
+        std::string dbg_map;
+        {
+            auto & values = this->data(place).values;
+            writeVarUInt(values.size(), bufW);
+            LOG_DEBUG(log, "Write len: {}", values.size());
+            for (auto value : values){
+                LOG_DEBUG(log, "Write weigth: {}", value.first);
+                writeVarUInt(value.first, bufW);
+
+                std::string sec = value.second;
+                LOG_DEBUG(log, "Write item: {}", sec);
+                writeBinary(value.second, bufW);
+
+                dbg_map += "{ ";
+                dbg_map += std::to_string(value.first);
+                dbg_map += ", ";
+                dbg_map += sec;
+                dbg_map += " } ";
+            }
+
+            LOG_DEBUG(log, "Original values : {}", dbg_map.data());
+            LOG_DEBUG(log, "Buffer offset: {} count: {}", bufW.offset(), bufW.count());
+        }
+
+        bufW.finalize();
+
+        ReadBuffer bufR(memory, bufW.offset());
+        UInt64 length;
+        readVarUInt(length, bufR);
+        LOG_DEBUG(log, "Readed count: {} items", length);
+        std::map<int, std::string>values;
+        while (length--){
+            UInt64 first = 0;
+            readVarUInt(first, bufR);
+
+            LOG_DEBUG(log, "Readed weigth: {}", first);
+            std::string second;
+            readBinary(second, bufR);
+            LOG_DEBUG(log, "Readed item: {}", second);
+            values.insert({first, second});
+        }
+        
+        for ( const auto &val : values){
+            dbg_map += "{ " + std::to_string(val.first) + ", " + val.second.c_str() + " } ";
+        }
+        LOG_DEBUG(log, "Restored values : {}", dbg_map.data());
+
+        delete []memory;
+    }
+*/                                                                                                                                                                                                                                                             
     void merge(AggregateDataPtr __restrict place, ConstAggregateDataPtr rhs, Arena *) const override
     {
         auto & values_external = this->data(rhs).values;
     
         for (auto value : values_external){
-            add(place, value.second, value.first);
+            add(place, value.second.c_str(), value.first);
         }
     }   
 
@@ -203,6 +266,7 @@ public:
         UInt64 length;
         readVarUInt(length, buf);
 
+        values.clear();
         while (length--){
             UInt64 first = 0;
             readVarUInt(first, buf);
@@ -224,8 +288,11 @@ public:
         for (auto it = values.begin(); it != values.end(); ++it){
             auto ptr = arena->alloc(it->second.size());
             std::copy(it->second.data(), it->second.data() + it->second.length(), ptr);
-            StringRef str_serialized = StringRef{ptr, it->second.size()};
-            data_to.deserializeAndInsertFromArena(it->second.data());
+            StringRef str_serialized(ptr, it->second.size());
+            if constexpr (is_plain_column)
+                data_to.insertData(str_serialized.data, str_serialized.size);
+            else
+                data_to.deserializeAndInsertFromArena(str_serialized.data);
         }
     }
 };
