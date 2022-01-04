@@ -20,122 +20,107 @@
 #include <IO/ReadBuffer.h>
 #include <IO/ReadHelpers.h>
 #include <IO/VarInt.h>
-
+#include <typeinfo>
 
 namespace DB
 {
 struct Settings;
 
 template <typename T>
-struct AggregateFunctionGroupSortedArrayData
+class AggregateFunctionGroupSortedArrayData
 {
-    typedef std::map <int, T>Map;
-    Map values;
-};
-
-
-template <typename T>
-class AggregateFunctionGroupSortedArray
-    : public IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T>, AggregateFunctionGroupSortedArray<T>>
-{
-protected:
-    using State = AggregateFunctionGroupSortedArrayData<T>;
-    UInt64 threshold;
-
 public:
-    AggregateFunctionGroupSortedArray(UInt64 threshold_, UInt64 /*load_factor*/, const DataTypes & argument_types_, const Array & params)
-        : IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T>, AggregateFunctionGroupSortedArray<T>>(argument_types_, params)
-        , threshold(threshold_) {}
+    AggregateFunctionGroupSortedArrayData(UInt64 threshold_ = -1):threshold(threshold_){}
 
-    String getName() const override { return "groupSortedArray"; }
-
-    DataTypePtr getReturnType() const override
+    void add(T item, Int64 weight)
     {
-        return std::make_shared<DataTypeArray>(this->argument_types[0]);
-    }
+        if (weight < last){
+            values.insert({weight, item});
 
-    bool allocatesMemoryInArena() const override { return false; }
-
-    void add(AggregateDataPtr __restrict place, const IColumn ** columns, size_t row_num, Arena *) const override
-    {
-        auto & values = this->data(place).values;
-
-        auto v0 = columns[0]->getUInt(row_num);
-        auto v1 = columns[1]->getUInt(row_num);
-        values.insert({v1, v0});
-
-        while (values.size()>threshold)
-            values.erase(--values.end());
-    }
-                                                                                                                                                                                                                                                                            
-    void merge(AggregateDataPtr __restrict place, ConstAggregateDataPtr rhs, Arena *) const override
-    {
-        auto & values = this->data(place).values;
-        auto & values_external = this->data(rhs).values;
-        values.insert(values_external.begin(), values_external.end());
-
-        while (values.size()>threshold)
-            values.erase(--values.end());
-    }   
-
-    void serialize(ConstAggregateDataPtr __restrict place, WriteBuffer & buf, std::optional<size_t> /* version */) const override
-    {
-        auto & values = this->data(place).values;
-        writeVarUInt(values.size(), buf);
-        for (auto value : values){
-            writeVarUInt(value.first, buf);
-            writeVarUInt(value.second, buf);
+            while (values.size()>threshold)
+            {
+                values.erase(--values.end());
+                last = (--values.end())->first;
+            }
         }
     }
 
-    void deserialize(AggregateDataPtr __restrict place, ReadBuffer & buf, std::optional<size_t> /* version  */, Arena *) const override
+    void merge(const AggregateFunctionGroupSortedArrayData &other)
     {
-        auto & values = this->data(place).values;
+        values.insert(other.values.begin(), other.values.end());
+
+        while (values.size()>threshold)
+            values.erase(--values.end());
+    }
+
+    void setThreshold(int threshold_)
+    {
+        threshold = threshold_;
+    }
+
+    void serialize(WriteBuffer & buf) const
+    {
+        writeVarT(UInt64(values.size()), buf);
+        for (auto value : values){
+            writeVarUInt(value.first, buf);
+
+            if constexpr (std::is_same_v<T, std::string>)
+                writeBinary(value.second, buf);
+            else
+                writeVarUInt(value.second, buf);
+        }
+    }
+
+    void deserialize(ReadBuffer & buf)
+    {
+        values.clear();
         UInt64 length;
         readVarUInt(length, buf);
 
         while (length--){
             UInt64 first = 0;
             readVarUInt(first, buf);
-            UInt64 second = 0;
-            readVarUInt(second, buf);
+            T second;
+
+            if constexpr (std::is_same_v<T, std::string>) 
+                readBinary(second, buf);
+            else
+                readVarUInt(second, buf);
             values.insert({first, second});
         }
     }
 
-    void insertResultInto(AggregateDataPtr __restrict place, IColumn & to, Arena *) const override
-    {
-        ColumnArray & arr_to = assert_cast<ColumnArray &>(to);
-        auto & values = this->data(place).values;
-
-        ColumnArray::Offsets & offsets_to = arr_to.getOffsets();
-        typename ColumnVector<T>::Container & data_to = assert_cast<ColumnVector<T> &>(arr_to.getData()).getData();
-        size_t old_size = data_to.size();
-        size_t size = values.size();
-        offsets_to.push_back(offsets_to.back() + size);
-        data_to.resize(old_size + size);
-
-        size_t i = 0;
-        for (auto it = values.begin(); it != values.end(); ++it, ++i)
-            data_to[old_size + i] = it->second;
-    }
+    typedef std::map <Int64, T>Map;
+    Map values;
+    UInt64 threshold;
+    Int64 last = std::numeric_limits<Int64>::max();
+    int len;
 };
 
-template <bool is_plain_column> class AggregateFunctionGroupSortedArrayGeneric
-    : public IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<std::string>,
-                                          AggregateFunctionGroupSortedArrayGeneric<is_plain_column>>
+template <bool is_plain_column, typename T> class AggregateFunctionGroupSortedArray
+    : public IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T>,
+                                          AggregateFunctionGroupSortedArray<is_plain_column, T>>
 {
 protected:
-    using State = AggregateFunctionGroupSortedArrayData<std::string>;
+    using State = AggregateFunctionGroupSortedArrayData<T>;
     UInt64 threshold;
     DataTypePtr & input_data_type;
 
     static void deserializeAndInsert(StringRef str, IColumn & data_to);
 
 public:
-    AggregateFunctionGroupSortedArrayGeneric(UInt64 threshold_, UInt64 /*load_factor*/, const DataTypes & argument_types_, const Array & params)
-        : IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<std::string>, AggregateFunctionGroupSortedArrayGeneric>(argument_types_, params)
-        , threshold(threshold_), input_data_type(this->argument_types[0]) {}
+    AggregateFunctionGroupSortedArray(UInt64 threshold_, UInt64 /*load_factor*/, const DataTypes & argument_types_, const Array & params)
+        : IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T>, AggregateFunctionGroupSortedArray>(argument_types_, params)
+        , threshold(threshold_), input_data_type(this->argument_types[0]) 
+    {
+        
+    }
+
+    void create(AggregateDataPtr place) const override
+    {
+        IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T>, AggregateFunctionGroupSortedArray>::create(place);
+        this->data(place).setThreshold(threshold);
+    }
 
     String getName() const override { return "groupSortedArray"; }
 
@@ -148,78 +133,90 @@ public:
 
     void add(AggregateDataPtr __restrict place, const IColumn ** columns, size_t row_num, Arena *arena) const override
     {
-        if constexpr (is_plain_column)
-            add(place, columns[0]->getDataAt(row_num).toString(), columns[1]->getUInt(row_num));
+        if constexpr (std::is_same_v<T, std::string>)
+        {
+            if constexpr (is_plain_column)
+            {
+                this->data(place).add(columns[0]->getDataAt(row_num).toString(), columns[1]->getUInt(row_num));
+            }
+            else
+            {
+                const char * begin = nullptr;
+                StringRef str_serialized = columns[0]->serializeValueIntoArena(row_num, *arena, begin);
+                this->data(place).add(str_serialized.toString(), columns[1]->getUInt(row_num));
+                arena->rollback(str_serialized.size);
+            }
+        }
         else
         {
-            const char * begin = nullptr;
-            StringRef str_serialized = columns[0]->serializeValueIntoArena(row_num, *arena, begin);
-            add(place, str_serialized.toString(), columns[1]->getUInt(row_num));
-            arena->rollback(str_serialized.size);
+            this->data(place).add(columns[0]->getUInt(row_num), columns[1]->getUInt(row_num));
         }
-    }
-
-    inline void add(AggregateDataPtr __restrict place, std::string item, const UInt64 &weight) const
-    {
-        auto & values = this->data(place).values;
-        values.insert({weight, item});
-        while (values.size()>threshold)
-            values.erase(--values.end());
     }
 
     void merge(AggregateDataPtr __restrict place, ConstAggregateDataPtr rhs, Arena *) const override
-    {
-        auto & values_external = this->data(rhs).values;
-    
-        for (auto value : values_external){
-            add(place, value.second.c_str(), value.first);
-        }
+    { 
+        this->data(place).merge(this->data(rhs));
     }   
 
     void serialize(ConstAggregateDataPtr __restrict place, WriteBuffer & buf, std::optional<size_t> /* version */) const override
     {
-        auto & values = this->data(place).values;
-        writeVarUInt(values.size(), buf);
-        for (auto value : values){
-            writeVarUInt(value.first, buf);
-            writeBinary(value.second, buf);
-        }
+        this->data(place).serialize(buf);
     }
 
     void deserialize(AggregateDataPtr __restrict place, ReadBuffer & buf, std::optional<size_t> /* version  */, Arena *) const override
     {
-        auto & values = this->data(place).values;
-        UInt64 length;
-        readVarUInt(length, buf);
-
-        values.clear();
-        while (length--){
-            UInt64 first = 0;
-            readVarUInt(first, buf);
-            std::string second;
-            readBinary(second, buf);
-            values.insert({first, second});
-        }
+        this->data(place).deserialize(buf);
     }
 
     void insertResultInto(AggregateDataPtr __restrict place, IColumn &to, Arena *arena) const override
     {
         ColumnArray & arr_to = assert_cast<ColumnArray &>(to);
         ColumnArray::Offsets & offsets_to = arr_to.getOffsets();
-        IColumn & data_to = arr_to.getData();
 
         auto & values = this->data(place).values;
-        offsets_to.push_back(offsets_to.back() + values.size());
+        int old_size = offsets_to.back();
+        offsets_to.push_back(old_size + values.size());
 
-        for (auto it = values.begin(); it != values.end(); ++it){
-            auto ptr = arena->alloc(it->second.size());
-            std::copy(it->second.data(), it->second.data() + it->second.length(), ptr);
-            StringRef str_serialized(ptr, it->second.size());
-            if constexpr (is_plain_column)
-                data_to.insertData(str_serialized.data, str_serialized.size);
-            else
-                data_to.deserializeAndInsertFromArena(str_serialized.data);
+
+        if constexpr (std::is_same_v<T, std::string>)
+        {
+            IColumn & data_to = arr_to.getData();
+            for (auto it = values.begin(); it != values.end(); ++it){
+                auto ptr = arena->alloc(it->second.size());
+                std::copy(it->second.data(), it->second.data() + it->second.length(), ptr);
+                StringRef str_serialized(ptr, it->second.size());
+                if constexpr (is_plain_column)
+                    data_to.insertData(str_serialized.data, str_serialized.size);
+                else
+                    data_to.deserializeAndInsertFromArena(str_serialized.data);
+            }
         }
+        else
+        {
+            typename ColumnVector<T>::Container & data_to = assert_cast<ColumnVector<T> &>(arr_to.getData()).getData();
+            data_to.resize(old_size + values.size());
+
+            size_t i = 0;
+            for (auto it = values.begin(); it != values.end(); ++it, ++i)
+                data_to[old_size + i] = it->second;
+        }
+    }
+};
+
+template <typename T> class AggregateFunctionGroupSortedArrayNotPlain : public AggregateFunctionGroupSortedArray<false, T>{
+    public:
+    AggregateFunctionGroupSortedArrayNotPlain(UInt64 threshold_, UInt64 load_factor, const DataTypes & argument_types_, const Array & params)
+        : AggregateFunctionGroupSortedArray<false, T>(threshold_, load_factor, argument_types_, params)
+    {
+        
+    }
+};
+template <typename T> class AggregateFunctionGroupSortedArrayPlain : public AggregateFunctionGroupSortedArray<true, T>{
+public:
+    AggregateFunctionGroupSortedArrayPlain(UInt64 threshold_, UInt64 load_factor, const DataTypes & argument_types_, const Array & params)
+        : AggregateFunctionGroupSortedArray<true, T>(threshold_, load_factor, argument_types_, params)
+    {
+        
     }
 };
 

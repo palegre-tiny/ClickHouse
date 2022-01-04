@@ -29,15 +29,15 @@ namespace
 {
 
 /// Substitute return type for Date and DateTime
-class AggregateFunctionGroupSortedArrayDate : public AggregateFunctionGroupSortedArray<DataTypeDate::FieldType>
+class AggregateFunctionGroupSortedArrayDate : public AggregateFunctionGroupSortedArray<false, DataTypeDate::FieldType>
 {
-    using AggregateFunctionGroupSortedArray<DataTypeDate::FieldType>::AggregateFunctionGroupSortedArray;
+    using AggregateFunctionGroupSortedArray<false, DataTypeDate::FieldType>::AggregateFunctionGroupSortedArray;
     DataTypePtr getReturnType() const override { return std::make_shared<DataTypeArray>(std::make_shared<DataTypeDate>()); }
 };
 
-class AggregateFunctionGroupSortedArrayDateTime : public AggregateFunctionGroupSortedArray<DataTypeDateTime::FieldType>
+class AggregateFunctionGroupSortedArrayDateTime : public AggregateFunctionGroupSortedArray<false, DataTypeDateTime::FieldType>
 {
-    using AggregateFunctionGroupSortedArray<DataTypeDateTime::FieldType>::AggregateFunctionGroupSortedArray;
+    using AggregateFunctionGroupSortedArray<false, DataTypeDateTime::FieldType>::AggregateFunctionGroupSortedArray;
     DataTypePtr getReturnType() const override { return std::make_shared<DataTypeArray>(std::make_shared<DataTypeDateTime>()); }
 };
 
@@ -54,12 +54,12 @@ static IAggregateFunction * createWithExtraTypes(const DataTypes & argument_type
 
     if (argument_types[0]->isValueUnambiguouslyRepresentedInContiguousMemoryRegion())
     {
-        return new AggregateFunctionGroupSortedArrayGeneric<true>(threshold, load_factor, argument_types, params);
+        return new AggregateFunctionGroupSortedArray<true, std::string>(threshold, load_factor, argument_types, params);
     }
     else
     {
-        return new AggregateFunctionGroupSortedArrayGeneric<false>(threshold, load_factor, argument_types, params);
-    }    
+        return new AggregateFunctionGroupSortedArray<false, std::string>(threshold, load_factor, argument_types, params);
+    } 
 }
 
 AggregateFunctionPtr createAggregateFunctionGroupSortedArray(const std::string & name, const DataTypes & argument_types, const Array & params, const Settings *)
@@ -98,7 +98,7 @@ AggregateFunctionPtr createAggregateFunctionGroupSortedArray(const std::string &
         threshold = k;
     }
 
-    AggregateFunctionPtr res(createWithNumericType<AggregateFunctionGroupSortedArray>(
+    AggregateFunctionPtr res(createWithNumericType<AggregateFunctionGroupSortedArrayNotPlain>(
         *argument_types[0], threshold, load_factor, argument_types, params));
 
     if (!res)
