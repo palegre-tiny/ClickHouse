@@ -28,17 +28,14 @@ namespace ErrorCodes
 namespace
 {
 
-/// Substitute return type for Date and DateTime
-class AggregateFunctionGroupSortedArrayDate : public AggregateFunctionGroupSortedArray<false, DataTypeDate::FieldType>
-{
-    using AggregateFunctionGroupSortedArray<false, DataTypeDate::FieldType>::AggregateFunctionGroupSortedArray;
-    DataTypePtr getReturnType() const override { return std::make_shared<DataTypeArray>(std::make_shared<DataTypeDate>()); }
+template <typename T> class AggregateFunctionGroupSortedArrayNumeric : public AggregateFunctionGroupSortedArray<false, T>{
+    using AggregateFunctionGroupSortedArray<false, T>::AggregateFunctionGroupSortedArray;
 };
 
-class AggregateFunctionGroupSortedArrayDateTime : public AggregateFunctionGroupSortedArray<false, DataTypeDateTime::FieldType>
+template <typename T> class AggregateFunctionGroupSortedArrayFieldType : public AggregateFunctionGroupSortedArray<false, typename T::FieldType>
 {
-    using AggregateFunctionGroupSortedArray<false, DataTypeDateTime::FieldType>::AggregateFunctionGroupSortedArray;
-    DataTypePtr getReturnType() const override { return std::make_shared<DataTypeArray>(std::make_shared<DataTypeDateTime>()); }
+    using AggregateFunctionGroupSortedArray<false, typename T::FieldType>::AggregateFunctionGroupSortedArray;
+    DataTypePtr getReturnType() const override { return std::make_shared<DataTypeArray>(std::make_shared<T>()); }
 };
 
 static IAggregateFunction * createWithExtraTypes(const DataTypes & argument_types, UInt64 threshold, UInt64 load_factor, const Array & params)
@@ -48,9 +45,9 @@ static IAggregateFunction * createWithExtraTypes(const DataTypes & argument_type
 
     WhichDataType which(argument_types[0]);
     if (which.idx == TypeIndex::Date)
-        return new AggregateFunctionGroupSortedArrayDate(threshold, load_factor, argument_types, params);
+        return new AggregateFunctionGroupSortedArrayFieldType<DataTypeDate>(threshold, load_factor, argument_types, params);
     if (which.idx == TypeIndex::DateTime)
-        return new AggregateFunctionGroupSortedArrayDateTime(threshold, load_factor, argument_types, params);
+        return new AggregateFunctionGroupSortedArrayFieldType<DataTypeDateTime>(threshold, load_factor, argument_types, params);
 
     if (argument_types[0]->isValueUnambiguouslyRepresentedInContiguousMemoryRegion())
     {
@@ -98,7 +95,7 @@ AggregateFunctionPtr createAggregateFunctionGroupSortedArray(const std::string &
         threshold = k;
     }
 
-    AggregateFunctionPtr res(createWithNumericType<AggregateFunctionGroupSortedArrayNotPlain>(
+    AggregateFunctionPtr res(createWithNumericType<AggregateFunctionGroupSortedArrayNumeric>(
         *argument_types[0], threshold, load_factor, argument_types, params));
 
     if (!res)

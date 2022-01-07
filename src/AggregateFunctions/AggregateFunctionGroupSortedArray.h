@@ -202,22 +202,4 @@ public:
         }
     }
 };
-
-template <typename T> class AggregateFunctionGroupSortedArrayNotPlain : public AggregateFunctionGroupSortedArray<false, T>{
-    public:
-    AggregateFunctionGroupSortedArrayNotPlain(UInt64 threshold_, UInt64 load_factor, const DataTypes & argument_types_, const Array & params)
-        : AggregateFunctionGroupSortedArray<false, T>(threshold_, load_factor, argument_types_, params)
-    {
-        
-    }
-};
-template <typename T> class AggregateFunctionGroupSortedArrayPlain : public AggregateFunctionGroupSortedArray<true, T>{
-public:
-    AggregateFunctionGroupSortedArrayPlain(UInt64 threshold_, UInt64 load_factor, const DataTypes & argument_types_, const Array & params)
-        : AggregateFunctionGroupSortedArray<true, T>(threshold_, load_factor, argument_types_, params)
-    {
-        
-    }
-};
-
 }
