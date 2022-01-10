@@ -1,11 +1,11 @@
 #pragma once
 
-#include <IO/WriteHelpers.h>
 #include <IO/ReadHelpers.h>
+#include <IO/WriteHelpers.h>
 
 #include <DataTypes/DataTypeArray.h>
-#include <DataTypes/DataTypesNumber.h>
 #include <DataTypes/DataTypeString.h>
+#include <DataTypes/DataTypesNumber.h>
 
 #include <Columns/ColumnArray.h>
 
@@ -15,12 +15,12 @@
 #include <AggregateFunctions/IAggregateFunction.h>
 #include <base/logger_useful.h>
 
-#include <IO/WriteBuffer.h>
-#include <IO/WriteHelpers.h>
+#include <typeinfo>
 #include <IO/ReadBuffer.h>
 #include <IO/ReadHelpers.h>
 #include <IO/VarInt.h>
-#include <typeinfo>
+#include <IO/WriteBuffer.h>
+#include <IO/WriteHelpers.h>
 
 namespace DB
 {
@@ -30,14 +30,15 @@ template <typename T>
 class AggregateFunctionGroupSortedArrayData
 {
 public:
-    AggregateFunctionGroupSortedArrayData(UInt64 threshold_ = -1):threshold(threshold_){}
+    AggregateFunctionGroupSortedArrayData(UInt64 threshold_ = -1) : threshold(threshold_) { }
 
     void add(T item, Int64 weight)
     {
-        if (weight < last){
+        if (weight < last)
+        {
             values.insert({weight, item});
 
-            while (values.size()>threshold)
+            while (values.size() > threshold)
             {
                 values.erase(--values.end());
                 last = (--values.end())->first;
@@ -45,23 +46,21 @@ public:
         }
     }
 
-    void merge(const AggregateFunctionGroupSortedArrayData &other)
+    void merge(const AggregateFunctionGroupSortedArrayData & other)
     {
         values.insert(other.values.begin(), other.values.end());
 
-        while (values.size()>threshold)
+        while (values.size() > threshold)
             values.erase(--values.end());
     }
 
-    void setThreshold(int threshold_)
-    {
-        threshold = threshold_;
-    }
+    void setThreshold(int threshold_) { threshold = threshold_; }
 
     void serialize(WriteBuffer & buf) const
     {
         writeVarT(UInt64(values.size()), buf);
-        for (auto value : values){
+        for (auto value : values)
+        {
             writeVarUInt(value.first, buf);
 
             if constexpr (std::is_same_v<T, std::string>)
@@ -77,12 +76,13 @@ public:
         UInt64 length;
         readVarUInt(length, buf);
 
-        while (length--){
+        while (length--)
+        {
             UInt64 first = 0;
             readVarUInt(first, buf);
             T second;
 
-            if constexpr (std::is_same_v<T, std::string>) 
+            if constexpr (std::is_same_v<T, std::string>)
                 readBinary(second, buf);
             else
                 readVarUInt(second, buf);
@@ -90,16 +90,16 @@ public:
         }
     }
 
-    typedef std::map <Int64, T>Map;
+    typedef std::map<Int64, T> Map;
     Map values;
     UInt64 threshold;
     Int64 last = std::numeric_limits<Int64>::max();
     int len;
 };
 
-template <bool is_plain_column, typename T> class AggregateFunctionGroupSortedArray
-    : public IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T>,
-                                          AggregateFunctionGroupSortedArray<is_plain_column, T>>
+template <bool is_plain_column, typename T>
+class AggregateFunctionGroupSortedArray
+    : public IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T>, AggregateFunctionGroupSortedArray<is_plain_column, T>>
 {
 protected:
     using State = AggregateFunctionGroupSortedArrayData<T>;
@@ -111,9 +111,9 @@ protected:
 public:
     AggregateFunctionGroupSortedArray(UInt64 threshold_, UInt64 /*load_factor*/, const DataTypes & argument_types_, const Array & params)
         : IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T>, AggregateFunctionGroupSortedArray>(argument_types_, params)
-        , threshold(threshold_), input_data_type(this->argument_types[0]) 
+        , threshold(threshold_)
+        , input_data_type(this->argument_types[0])
     {
-        
     }
 
     void create(AggregateDataPtr place) const override
@@ -124,14 +124,11 @@ public:
 
     String getName() const override { return "groupSortedArray"; }
 
-    DataTypePtr getReturnType() const override
-    {
-        return std::make_shared<DataTypeArray>(input_data_type);
-    }
+    DataTypePtr getReturnType() const override { return std::make_shared<DataTypeArray>(input_data_type); }
 
     bool allocatesMemoryInArena() const override { return true; }
 
-    void add(AggregateDataPtr __restrict place, const IColumn ** columns, size_t row_num, Arena *arena) const override
+    void add(AggregateDataPtr __restrict place, const IColumn ** columns, size_t row_num, Arena * arena) const override
     {
         if constexpr (std::is_same_v<T, std::string>)
         {
@@ -154,9 +151,9 @@ public:
     }
 
     void merge(AggregateDataPtr __restrict place, ConstAggregateDataPtr rhs, Arena *) const override
-    { 
+    {
         this->data(place).merge(this->data(rhs));
-    }   
+    }
 
     void serialize(ConstAggregateDataPtr __restrict place, WriteBuffer & buf, std::optional<size_t> /* version */) const override
     {
@@ -168,7 +165,7 @@ public:
         this->data(place).deserialize(buf);
     }
 
-    void insertResultInto(AggregateDataPtr __restrict place, IColumn &to, Arena *arena) const override
+    void insertResultInto(AggregateDataPtr __restrict place, IColumn & to, Arena * arena) const override
     {
         ColumnArray & arr_to = assert_cast<ColumnArray &>(to);
         ColumnArray::Offsets & offsets_to = arr_to.getOffsets();
@@ -181,7 +178,8 @@ public:
         if constexpr (std::is_same_v<T, std::string>)
         {
             IColumn & data_to = arr_to.getData();
-            for (auto it = values.begin(); it != values.end(); ++it){
+            for (auto it = values.begin(); it != values.end(); ++it)
+            {
                 auto ptr = arena->alloc(it->second.size());
                 std::copy(it->second.data(), it->second.data() + it->second.length(), ptr);
                 StringRef str_serialized(ptr, it->second.size());
