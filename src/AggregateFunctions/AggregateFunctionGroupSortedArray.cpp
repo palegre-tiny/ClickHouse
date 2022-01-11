@@ -53,11 +53,11 @@ namespace
 
         if (argument_types[0]->isValueUnambiguouslyRepresentedInContiguousMemoryRegion())
         {
-            return new AggregateFunctionGroupSortedArray<true, std::string>(threshold, load_factor, argument_types, params);
+            return new AggregateFunctionGroupSortedArray<true, StringRef>(threshold, load_factor, argument_types, params);
         }
         else
         {
-            return new AggregateFunctionGroupSortedArray<false, std::string>(threshold, load_factor, argument_types, params);
+            return new AggregateFunctionGroupSortedArray<false, StringRef>(threshold, load_factor, argument_types, params);
         }
     }
 

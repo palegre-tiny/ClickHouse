@@ -65,14 +65,14 @@ public:
         {
             writeVarUInt(value.first, buf);
 
-            if constexpr (std::is_same_v<T, std::string>)
+            if constexpr (std::is_same_v<T, StringRef>)
                 writeBinary(value.second, buf);
             else
                 writeVarUInt(value.second, buf);
         }
     }
 
-    void deserialize(ReadBuffer & buf)
+    void deserialize(ReadBuffer & buf, Arena *arena)
     {
         values.clear();
         UInt64 length;
@@ -84,8 +84,8 @@ public:
             readVarUInt(first, buf);
             T second;
 
-            if constexpr (std::is_same_v<T, std::string>)
-                readBinary(second, buf);
+            if constexpr (std::is_same_v<T, StringRef>)
+                second = readStringBinaryInto(*arena, buf);
             else
                 readVarUInt(second, buf);
             values.insert({first, second});
@@ -131,6 +131,10 @@ public:
 
     bool allocatesMemoryInArena() const override { return true; }
 
+    void add(AggregateDataPtr __restrict, const IColumn **, size_t, Arena *) const override
+    {
+    }
+    
     void addBatchSinglePlace(
         size_t batch_size, AggregateDataPtr place, const IColumn ** columns, Arena *arena, ssize_t if_argument_pos) const override
     {
@@ -153,21 +157,23 @@ public:
         }
 
         State stateAux;
+        const char * begin = nullptr;
         //Now create a new map with the final type extracting values from selected columns        
         for (auto item : mapAux.values)
         {
-            if constexpr (std::is_same_v<T, std::string>)
+            if constexpr (std::is_same_v<T, StringRef>)
             {
                 if constexpr (is_plain_column)
                 {
-                    stateAux.add(columns[0]->getDataAt(item.second).toString(), item.first);
+                    StringRef str = columns[0]->getDataAt(item.second);
+                    auto ptr = arena->alloc(str.size);
+                    std::copy(str.data, str.data + str.size, ptr);
+                    stateAux.add(StringRef(ptr, str.size), item.first);
                 }
                 else
                 {
-                    const char * begin = nullptr;
                     StringRef str_serialized = columns[0]->serializeValueIntoArena(item.second, *arena, begin);
-                    stateAux.add(str_serialized.toString(), item.second);
-                    arena->rollback(str_serialized.size);
+                    stateAux.add(str_serialized, item.first);
                 }
             }
             else
@@ -192,12 +198,12 @@ public:
         this->data(place).serialize(buf);
     }
 
-    void deserialize(AggregateDataPtr __restrict place, ReadBuffer & buf, std::optional<size_t> /* version  */, Arena *) const override
+    void deserialize(AggregateDataPtr __restrict place, ReadBuffer & buf, std::optional<size_t> /* version  */, Arena *arena) const override
     {
-        this->data(place).deserialize(buf);
+        this->data(place).deserialize(buf, arena);
     }
 
-    void insertResultInto(AggregateDataPtr __restrict place, IColumn & to, Arena * arena) const override
+    void insertResultInto(AggregateDataPtr __restrict place, IColumn & to, Arena * /*arena*/) const override
     {
         ColumnArray & arr_to = assert_cast<ColumnArray &>(to);
         ColumnArray::Offsets & offsets_to = arr_to.getOffsets();
@@ -206,19 +212,16 @@ public:
         int old_size = offsets_to.back();
         offsets_to.push_back(old_size + values.size());
 
-
-        if constexpr (std::is_same_v<T, std::string>)
+        if constexpr (std::is_same_v<T, StringRef>)
         {
             IColumn & data_to = arr_to.getData();
             for (auto it = values.begin(); it != values.end(); ++it)
             {
-                auto ptr = arena->alloc(it->second.size());
-                std::copy(it->second.data(), it->second.data() + it->second.length(), ptr);
-                StringRef str_serialized(ptr, it->second.size());
+                auto &str = it->second;
                 if constexpr (is_plain_column)
-                    data_to.insertData(str_serialized.data, str_serialized.size);
+                    data_to.insertData(str.data, str.size);
                 else
-                    data_to.deserializeAndInsertFromArena(str_serialized.data);
+                    data_to.deserializeAndInsertFromArena(str.data);
             }
         }
         else
