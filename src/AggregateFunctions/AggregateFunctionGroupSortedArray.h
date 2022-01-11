@@ -22,6 +22,8 @@
 #include <IO/WriteBuffer.h>
 #include <IO/WriteHelpers.h>
 
+#define DEFAULT_THRESHOLD 10
+
 namespace DB
 {
 struct Settings;
@@ -30,7 +32,7 @@ template <typename T>
 class AggregateFunctionGroupSortedArrayData
 {
 public:
-    AggregateFunctionGroupSortedArrayData(UInt64 threshold_ = -1) : threshold(threshold_) { }
+    AggregateFunctionGroupSortedArrayData(UInt64 threshold_ = DEFAULT_THRESHOLD) : threshold(threshold_) { }
 
     void add(T item, Int64 weight)
     {
@@ -90,7 +92,7 @@ public:
         }
     }
 
-    typedef std::map<Int64, T> Map;
+    typedef std::multimap<Int64, T> Map;
     Map values;
     UInt64 threshold;
     Int64 last = std::numeric_limits<Int64>::max();
@@ -105,6 +107,7 @@ protected:
     using State = AggregateFunctionGroupSortedArrayData<T>;
     UInt64 threshold;
     DataTypePtr & input_data_type;
+    mutable std::mutex mutex;
 
     static void deserializeAndInsert(StringRef str, IColumn & data_to);
 
@@ -128,26 +131,55 @@ public:
 
     bool allocatesMemoryInArena() const override { return true; }
 
-    void add(AggregateDataPtr __restrict place, const IColumn ** columns, size_t row_num, Arena * arena) const override
+    void addBatchSinglePlace(
+        size_t batch_size, AggregateDataPtr place, const IColumn ** columns, Arena *arena, ssize_t if_argument_pos) const override
     {
-        if constexpr (std::is_same_v<T, std::string>)
+        //First store the first n elements with the column number
+        AggregateFunctionGroupSortedArrayData <size_t> mapAux(threshold);
+
+        if (if_argument_pos >= 0)
         {
-            if constexpr (is_plain_column)
+            const auto & flags = assert_cast<const ColumnUInt8 &>(*columns[if_argument_pos]).getData();
+            for (size_t i = 0; i < batch_size; ++i)
             {
-                this->data(place).add(columns[0]->getDataAt(row_num).toString(), columns[1]->getUInt(row_num));
-            }
-            else
-            {
-                const char * begin = nullptr;
-                StringRef str_serialized = columns[0]->serializeValueIntoArena(row_num, *arena, begin);
-                this->data(place).add(str_serialized.toString(), columns[1]->getUInt(row_num));
-                arena->rollback(str_serialized.size);
+                if (flags[i])
+                    mapAux.add(i, columns[1]->getUInt(i));
             }
         }
         else
         {
-            this->data(place).add(columns[0]->getUInt(row_num), columns[1]->getUInt(row_num));
+            for (size_t i = 0; i < batch_size; ++i)
+                mapAux.add(i, columns[1]->getUInt(i));
         }
+
+        State stateAux;
+        //Now create a new map with the final type extracting values from selected columns        
+        for (auto item : mapAux.values)
+        {
+            if constexpr (std::is_same_v<T, std::string>)
+            {
+                if constexpr (is_plain_column)
+                {
+                    stateAux.add(columns[0]->getDataAt(item.second).toString(), item.first);
+                }
+                else
+                {
+                    const char * begin = nullptr;
+                    StringRef str_serialized = columns[0]->serializeValueIntoArena(item.second, *arena, begin);
+                    stateAux.add(str_serialized.toString(), item.second);
+                    arena->rollback(str_serialized.size);
+                }
+            }
+            else
+            {
+                stateAux.add(columns[0]->getUInt(item.second), item.first);
+            }
+        }
+        
+        State &data = this->data(place);
+        mutex.lock();
+        data.merge(stateAux);
+        mutex.unlock();
     }
 
     void merge(AggregateDataPtr __restrict place, ConstAggregateDataPtr rhs, Arena *) const override
@@ -201,3 +233,5 @@ public:
     }
 };
 }
+
+#undef DEFAULT_THRESHOLD
