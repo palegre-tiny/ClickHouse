@@ -28,51 +28,38 @@ namespace DB
 {
 struct Settings;
 
-template <typename T>
-class AggregateFunctionGroupSortedArrayData
+template <typename Storage>
+struct AggregateFunctionGroupSortedArrayDataBase
 {
-public:
-    AggregateFunctionGroupSortedArrayData(UInt64 threshold_ = DEFAULT_THRESHOLD) : threshold(threshold_) { }
+    typedef typename Storage::value_type ValueType;
+    AggregateFunctionGroupSortedArrayDataBase(UInt64 threshold_ = DEFAULT_THRESHOLD) : threshold(threshold_) { }
 
-    void add(T item, Int64 weight)
+    virtual ~AggregateFunctionGroupSortedArrayDataBase(){}
+    inline void narrowDown()
     {
-        if (weight < last)
-        {
-            values.insert({weight, item});
-
-            while (values.size() > threshold)
-            {
-                values.erase(--values.end());
-                last = (--values.end())->first;
-            }
-        }
-    }
-
-    void merge(const AggregateFunctionGroupSortedArrayData & other)
-    {
-        values.insert(other.values.begin(), other.values.end());
-
         while (values.size() > threshold)
             values.erase(--values.end());
     }
 
-    void setThreshold(int threshold_) { threshold = threshold_; }
+    void merge(const AggregateFunctionGroupSortedArrayDataBase & other)
+    {
+        values.insert(other.values.begin(), other.values.end());
+        narrowDown();
+    }
 
     void serialize(WriteBuffer & buf) const
     {
         writeVarT(UInt64(values.size()), buf);
         for (auto value : values)
         {
-            writeVarUInt(value.first, buf);
-
-            if constexpr (std::is_same_v<T, StringRef>)
-                writeBinary(value.second, buf);
-            else
-                writeVarUInt(value.second, buf);
+           serializeItem(buf, value);
         }
     }
 
-    void deserialize(ReadBuffer & buf, Arena *arena)
+    virtual void serializeItem(WriteBuffer &buf, ValueType &val) const = 0;
+    virtual void deserializeItem(ReadBuffer &buf, ValueType &val, Arena *arena) const = 0;
+
+    void deserialize(ReadBuffer & buf, Arena * arena)
     {
         values.clear();
         UInt64 length;
@@ -80,31 +67,137 @@ public:
 
         while (length--)
         {
-            UInt64 first = 0;
-            readVarUInt(first, buf);
-            T second;
+            ValueType value;
+            deserializeItem(buf, value, arena);
+            values.insert(value);
+        }
 
-            if constexpr (std::is_same_v<T, StringRef>)
-                second = readStringBinaryInto(*arena, buf);
-            else
-                readVarUInt(second, buf);
-            values.insert({first, second});
+        narrowDown();
+    }
+
+    UInt64 threshold;
+    Storage values;
+};
+
+template <typename T> static void writeOneItem(WriteBuffer &buf, T item)
+{
+    if constexpr (std::is_same_v<T, StringRef>)
+        writeBinary(item, buf);
+    else
+        writeVarUInt(item, buf);
+}
+
+template <typename T> static void readOneItem(ReadBuffer &buf, Arena *arena, T item)
+{
+    if constexpr (std::is_same_v<T, StringRef>)
+        item = readStringBinaryInto(*arena, buf);
+    else
+        readVarUInt(item, buf);
+}
+
+template <typename T, bool is_weighted>
+struct AggregateFunctionGroupSortedArrayData
+{
+};
+
+template <typename T>
+struct AggregateFunctionGroupSortedArrayData<T, true> : public AggregateFunctionGroupSortedArrayDataBase<std::multimap<Int64, T>>
+{
+    using Base = AggregateFunctionGroupSortedArrayDataBase<std::multimap<Int64, T>>;
+    using Base::Base;
+
+    void add(T item, Int64 weight)
+    {
+        if (weight <= last)
+        {
+            Base::values.insert({weight, item});
+            Base::narrowDown();
+            last = (--Base::values.end())->first;
         }
     }
 
-    typedef std::multimap<Int64, T> Map;
-    Map values;
-    UInt64 threshold;
+    void serializeItem(WriteBuffer & buf, typename Base::ValueType &value) const override
+    {
+        writeOneItem(buf, value.first);
+        writeOneItem(buf, value.second);
+    }
+
+    virtual void deserializeItem(ReadBuffer &buf, typename Base::ValueType &value, Arena *arena) const override
+    {
+        readOneItem(buf, arena, value.first);
+        readOneItem(buf, arena, value.second);
+    }
+
+    static T itemValue(typename Base::ValueType &value)
+    {
+        return value.second;
+    }
+
     Int64 last = std::numeric_limits<Int64>::max();
-    int len;
 };
 
-template <bool is_plain_column, typename T>
-class AggregateFunctionGroupSortedArray
-    : public IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T>, AggregateFunctionGroupSortedArray<is_plain_column, T>>
+
+template <typename T>
+class AggregateFunctionGroupSortedArrayData<T, false> : public AggregateFunctionGroupSortedArrayDataBase<std::multiset<T>>
+{
+public:
+    using Base = AggregateFunctionGroupSortedArrayDataBase<std::multiset<T>>;
+    using Base::Base;
+
+    void add(T item)
+    {
+        Base::values.insert(item);
+        Base::narrowDown();
+    }
+
+    void serializeItem(WriteBuffer & buf, typename Base::ValueType &value) const override
+    {
+        writeOneItem(buf, value);
+    }
+
+    void deserializeItem(ReadBuffer &buf, typename Base::ValueType &value, Arena *arena) const override
+    {
+        readOneItem(buf, arena, value);
+    }
+
+    static T itemValue(typename Base::ValueType &value)
+    {
+        return value;
+    }
+};
+
+template <typename TT, bool is_plain_column>
+inline TT readItem(const IColumn * column, Arena * arena, size_t row)
+{
+    if constexpr (std::is_same_v<TT, StringRef>)
+    {
+        if constexpr (is_plain_column)
+        {
+            StringRef str = column->getDataAt(row);
+            auto ptr = arena->alloc(str.size);
+            std::copy(str.data, str.data + str.size, ptr);
+            return StringRef(ptr, str.size);
+        }
+        else
+        {
+            const char * begin = nullptr;
+            return column->serializeValueIntoArena(row, *arena, begin);
+        }
+    }
+    else
+    {
+        return column->getUInt(row);
+    }
+}
+
+template <bool is_plain_column, typename T, bool is_weighted>
+class AggregateFunctionGroupSortedArray : public IAggregateFunctionDataHelper<
+                                              AggregateFunctionGroupSortedArrayData<T, is_weighted>,
+                                              AggregateFunctionGroupSortedArray<is_plain_column, T, is_weighted>>
 {
 protected:
-    using State = AggregateFunctionGroupSortedArrayData<T>;
+    using State = AggregateFunctionGroupSortedArrayData<T, is_weighted>;
+
     UInt64 threshold;
     DataTypePtr & input_data_type;
     mutable std::mutex mutex;
@@ -113,7 +206,8 @@ protected:
 
 public:
     AggregateFunctionGroupSortedArray(UInt64 threshold_, UInt64 /*load_factor*/, const DataTypes & argument_types_, const Array & params)
-        : IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T>, AggregateFunctionGroupSortedArray>(argument_types_, params)
+        : IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T, is_weighted>, AggregateFunctionGroupSortedArray>(
+            argument_types_, params)
         , threshold(threshold_)
         , input_data_type(this->argument_types[0])
     {
@@ -121,68 +215,67 @@ public:
 
     void create(AggregateDataPtr place) const override
     {
-        IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T>, AggregateFunctionGroupSortedArray>::create(place);
-        this->data(place).setThreshold(threshold);
+        IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T, is_weighted>, AggregateFunctionGroupSortedArray>::create(
+            place);
+        this->data(place).threshold = threshold;
     }
 
-    String getName() const override { return "groupSortedArray"; }
+    String getName() const override { return is_weighted ? "groupSortedArray" : "groupSortedArrayWeighted"; }
 
     DataTypePtr getReturnType() const override { return std::make_shared<DataTypeArray>(input_data_type); }
 
     bool allocatesMemoryInArena() const override { return true; }
 
-    void add(AggregateDataPtr __restrict, const IColumn **, size_t, Arena *) const override
-    {
-    }
-    
+    void add(AggregateDataPtr __restrict, const IColumn **, size_t, Arena *) const override { }
+
     void addBatchSinglePlace(
-        size_t batch_size, AggregateDataPtr place, const IColumn ** columns, Arena *arena, ssize_t if_argument_pos) const override
+        size_t batch_size, AggregateDataPtr place, const IColumn ** columns, Arena * arena, ssize_t if_argument_pos) const override
     {
-        //First store the first n elements with the column number
-        AggregateFunctionGroupSortedArrayData <size_t> mapAux(threshold);
-
-        if (if_argument_pos >= 0)
-        {
-            const auto & flags = assert_cast<const ColumnUInt8 &>(*columns[if_argument_pos]).getData();
-            for (size_t i = 0; i < batch_size; ++i)
-            {
-                if (flags[i])
-                    mapAux.add(i, columns[1]->getUInt(i));
-            }
-        }
-        else
-        {
-            for (size_t i = 0; i < batch_size; ++i)
-                mapAux.add(i, columns[1]->getUInt(i));
-        }
-
         State stateAux;
-        const char * begin = nullptr;
-        //Now create a new map with the final type extracting values from selected columns        
-        for (auto item : mapAux.values)
+
+        if constexpr (is_weighted)
         {
-            if constexpr (std::is_same_v<T, StringRef>)
+            //First store the first n elements with the column number
+            AggregateFunctionGroupSortedArrayData<size_t, true> mapAux(threshold);
+            if (if_argument_pos >= 0)
             {
-                if constexpr (is_plain_column)
+                const auto & flags = assert_cast<const ColumnUInt8 &>(*columns[if_argument_pos]).getData();
+                for (size_t i = 0; i < batch_size; ++i)
                 {
-                    StringRef str = columns[0]->getDataAt(item.second);
-                    auto ptr = arena->alloc(str.size);
-                    std::copy(str.data, str.data + str.size, ptr);
-                    stateAux.add(StringRef(ptr, str.size), item.first);
-                }
-                else
-                {
-                    StringRef str_serialized = columns[0]->serializeValueIntoArena(item.second, *arena, begin);
-                    stateAux.add(str_serialized, item.first);
+                    if (flags[i])
+                        mapAux.add(i, readItem<size_t, is_plain_column>(columns[1], arena, i));
                 }
             }
             else
             {
-                stateAux.add(columns[0]->getUInt(item.second), item.first);
+                for (size_t i = 0; i < batch_size; ++i)
+                    mapAux.add(i, readItem<size_t, is_plain_column>(columns[1], arena, i));
+            }
+
+            //Now create a new map with the final type extracting values from selected columns
+            for (auto item : mapAux.values)
+                stateAux.add(readItem<T, is_plain_column>(columns[0], arena, item.second), item.first);
+        }
+        else
+        {
+            if (if_argument_pos >= 0)
+            {
+                const auto & flags = assert_cast<const ColumnUInt8 &>(*columns[if_argument_pos]).getData();
+                for (size_t i = 0; i < batch_size; ++i)
+                    if (flags[i])
+                    {
+                        auto val = readItem<T, is_plain_column>(columns[0], arena, i);
+                        stateAux.add(val);
+                    }
+            }
+            else
+            {
+                for (size_t i = 0; i < batch_size; ++i)
+                    stateAux.add(readItem<T, is_plain_column>(columns[0], arena, i));
             }
         }
-        
-        State &data = this->data(place);
+
+        State & data = this->data(place);
         mutex.lock();
         data.merge(stateAux);
         mutex.unlock();
@@ -215,9 +308,9 @@ public:
         if constexpr (std::is_same_v<T, StringRef>)
         {
             IColumn & data_to = arr_to.getData();
-            for (auto it = values.begin(); it != values.end(); ++it)
+            for (auto value : values)
             {
-                auto &str = it->second;
+                auto str = State::itemValue(value);
                 if constexpr (is_plain_column)
                     data_to.insertData(str.data, str.size);
                 else
@@ -228,10 +321,10 @@ public:
         {
             typename ColumnVector<T>::Container & data_to = assert_cast<ColumnVector<T> &>(arr_to.getData()).getData();
             data_to.resize(old_size + values.size());
+            size_t next = old_size;
 
-            size_t i = 0;
-            for (auto it = values.begin(); it != values.end(); ++it, ++i)
-                data_to[old_size + i] = it->second;
+            for (auto value : values)
+                data_to[next++] = State::itemValue(value);
         }
     }
 };

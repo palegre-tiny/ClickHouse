@@ -26,19 +26,20 @@ namespace ErrorCodes
 
 namespace
 {
-    template <typename T>
-    class AggregateFunctionGroupSortedArrayNumeric : public AggregateFunctionGroupSortedArray<false, T>
+    template <typename T, bool is_weighted>
+    class AggregateFunctionGroupSortedArrayNumeric : public AggregateFunctionGroupSortedArray<false, T, is_weighted>
     {
-        using AggregateFunctionGroupSortedArray<false, T>::AggregateFunctionGroupSortedArray;
+        using AggregateFunctionGroupSortedArray<false, T, is_weighted>::AggregateFunctionGroupSortedArray;
     };
 
-    template <typename T>
-    class AggregateFunctionGroupSortedArrayFieldType : public AggregateFunctionGroupSortedArray<false, typename T::FieldType>
+    template <typename T, bool is_weighted>
+    class AggregateFunctionGroupSortedArrayFieldType : public AggregateFunctionGroupSortedArray<false, typename T::FieldType, is_weighted>
     {
-        using AggregateFunctionGroupSortedArray<false, typename T::FieldType>::AggregateFunctionGroupSortedArray;
+        using AggregateFunctionGroupSortedArray<false, typename T::FieldType, is_weighted>::AggregateFunctionGroupSortedArray;
         DataTypePtr getReturnType() const override { return std::make_shared<DataTypeArray>(std::make_shared<T>()); }
     };
 
+    template <bool is_weighted>
     static IAggregateFunction *
     createWithExtraTypes(const DataTypes & argument_types, UInt64 threshold, UInt64 load_factor, const Array & params)
     {
@@ -47,28 +48,36 @@ namespace
 
         WhichDataType which(argument_types[0]);
         if (which.idx == TypeIndex::Date)
-            return new AggregateFunctionGroupSortedArrayFieldType<DataTypeDate>(threshold, load_factor, argument_types, params);
+            return new AggregateFunctionGroupSortedArrayFieldType<DataTypeDate, is_weighted>(threshold, load_factor, argument_types, params);
         if (which.idx == TypeIndex::DateTime)
-            return new AggregateFunctionGroupSortedArrayFieldType<DataTypeDateTime>(threshold, load_factor, argument_types, params);
+            return new AggregateFunctionGroupSortedArrayFieldType<DataTypeDateTime, is_weighted>(threshold, load_factor, argument_types, params);
 
         if (argument_types[0]->isValueUnambiguouslyRepresentedInContiguousMemoryRegion())
         {
-            return new AggregateFunctionGroupSortedArray<true, StringRef>(threshold, load_factor, argument_types, params);
+            return new AggregateFunctionGroupSortedArray<true, StringRef, false>(threshold, load_factor, argument_types, params);
         }
         else
         {
-            return new AggregateFunctionGroupSortedArray<false, StringRef>(threshold, load_factor, argument_types, params);
+            return new AggregateFunctionGroupSortedArray<false, StringRef, false>(threshold, load_factor, argument_types, params);
         }
     }
 
+    template <bool is_weighted>
     AggregateFunctionPtr createAggregateFunctionGroupSortedArray(
         const std::string & name, const DataTypes & argument_types, const Array & params, const Settings *)
     {
-        assertBinary(name, argument_types);
-        if (!isInteger(argument_types[1]))
-            throw Exception(
-                "The second argument for aggregate function 'groupSortedArray' must have integer type",
-                ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
+        if (!is_weighted)
+        {
+            assertUnary(name, argument_types);
+        }
+        else
+        {
+            assertBinary(name, argument_types);
+            if (!isInteger(argument_types[1]))
+                throw Exception(
+                    "The second argument for aggregate function 'groupSortedArray' must have integer type",
+                    ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
+        }
 
         UInt64 threshold = 10; /// default values
         UInt64 load_factor = 3;
@@ -101,11 +110,11 @@ namespace
             threshold = k;
         }
 
-        AggregateFunctionPtr res(createWithNumericType<AggregateFunctionGroupSortedArrayNumeric>(
+        AggregateFunctionPtr res(createWithNumericType<AggregateFunctionGroupSortedArrayNumeric, is_weighted>(
             *argument_types[0], threshold, load_factor, argument_types, params));
 
         if (!res)
-            res = AggregateFunctionPtr(createWithExtraTypes(argument_types, threshold, load_factor, params));
+            res = AggregateFunctionPtr(createWithExtraTypes<is_weighted>(argument_types, threshold, load_factor, params));
 
         if (!res)
             throw Exception(
@@ -114,13 +123,13 @@ namespace
 
         return res;
     }
-
 }
 
 void registerAggregateFunctionGroupSortedArray(AggregateFunctionFactory & factory)
 {
     AggregateFunctionProperties properties = {.returns_default_when_only_null = false, .is_order_dependent = true};
-    factory.registerFunction("groupSortedArray", {createAggregateFunctionGroupSortedArray, properties});
+    factory.registerFunction("groupSortedArray", {createAggregateFunctionGroupSortedArray<false>, properties});
+    factory.registerFunction("groupSortedArrayWeighted", {createAggregateFunctionGroupSortedArray<true>, properties});
 }
 
 }
