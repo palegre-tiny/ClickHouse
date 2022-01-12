@@ -1,14 +1,13 @@
 #pragma once
 
-#include <DataTypes/DataTypeArray.h>
 #include <Columns/ColumnArray.h>
+#include <DataTypes/DataTypeArray.h>
 
 #include <AggregateFunctions/IAggregateFunction.h>
 #include "AggregateFunctionGroupSortedArrayData.h"
 
 namespace DB
 {
-
 template <typename TT, bool is_plain_column>
 inline TT readItem(const IColumn * column, Arena * arena, size_t row)
 {
@@ -140,7 +139,8 @@ public:
         this->data(place).serialize(buf);
     }
 
-    void deserialize(AggregateDataPtr __restrict place, ReadBuffer & buf, std::optional<size_t> /* version  */, Arena *arena) const override
+    void
+    deserialize(AggregateDataPtr __restrict place, ReadBuffer & buf, std::optional<size_t> /* version  */, Arena * arena) const override
     {
         this->data(place).deserialize(buf, arena);
     }

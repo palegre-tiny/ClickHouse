@@ -48,9 +48,11 @@ namespace
 
         WhichDataType which(argument_types[0]);
         if (which.idx == TypeIndex::Date)
-            return new AggregateFunctionGroupSortedArrayFieldType<DataTypeDate, is_weighted>(threshold, load_factor, argument_types, params);
+            return new AggregateFunctionGroupSortedArrayFieldType<DataTypeDate, is_weighted>(
+                threshold, load_factor, argument_types, params);
         if (which.idx == TypeIndex::DateTime)
-            return new AggregateFunctionGroupSortedArrayFieldType<DataTypeDateTime, is_weighted>(threshold, load_factor, argument_types, params);
+            return new AggregateFunctionGroupSortedArrayFieldType<DataTypeDateTime, is_weighted>(
+                threshold, load_factor, argument_types, params);
 
         if (argument_types[0]->isValueUnambiguouslyRepresentedInContiguousMemoryRegion())
         {

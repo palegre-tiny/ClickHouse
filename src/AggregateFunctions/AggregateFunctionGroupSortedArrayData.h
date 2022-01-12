@@ -10,14 +10,13 @@
 
 namespace DB
 {
-
 template <typename Storage>
 struct AggregateFunctionGroupSortedArrayDataBase
 {
     typedef typename Storage::value_type ValueType;
     AggregateFunctionGroupSortedArrayDataBase(UInt64 threshold_ = DEFAULT_THRESHOLD) : threshold(threshold_) { }
 
-    virtual ~AggregateFunctionGroupSortedArrayDataBase(){}
+    virtual ~AggregateFunctionGroupSortedArrayDataBase() { }
     inline void narrowDown()
     {
         while (values.size() > threshold)
@@ -35,12 +34,12 @@ struct AggregateFunctionGroupSortedArrayDataBase
         writeVarT(UInt64(values.size()), buf);
         for (auto value : values)
         {
-           serializeItem(buf, value);
+            serializeItem(buf, value);
         }
     }
 
-    virtual void serializeItem(WriteBuffer &buf, ValueType &val) const = 0;
-    virtual void deserializeItem(ReadBuffer &buf, ValueType &val, Arena *arena) const = 0;
+    virtual void serializeItem(WriteBuffer & buf, ValueType & val) const = 0;
+    virtual void deserializeItem(ReadBuffer & buf, ValueType & val, Arena * arena) const = 0;
 
     void deserialize(ReadBuffer & buf, Arena * arena)
     {
@@ -62,7 +61,8 @@ struct AggregateFunctionGroupSortedArrayDataBase
     Storage values;
 };
 
-template <typename T> static void writeOneItem(WriteBuffer &buf, T item)
+template <typename T>
+static void writeOneItem(WriteBuffer & buf, T item)
 {
     if constexpr (std::is_same_v<T, StringRef>)
         writeBinary(item, buf);
@@ -70,7 +70,8 @@ template <typename T> static void writeOneItem(WriteBuffer &buf, T item)
         writeVarUInt(item, buf);
 }
 
-template <typename T> static void readOneItem(ReadBuffer &buf, Arena *arena, T item)
+template <typename T>
+static void readOneItem(ReadBuffer & buf, Arena * arena, T item)
 {
     if constexpr (std::is_same_v<T, StringRef>)
         item = readStringBinaryInto(*arena, buf);
@@ -84,8 +85,7 @@ struct AggregateFunctionGroupSortedArrayData
 };
 
 template <typename T>
-struct AggregateFunctionGroupSortedArrayData<T, true>
- : public AggregateFunctionGroupSortedArrayDataBase<std::multimap<Int64, T>>
+struct AggregateFunctionGroupSortedArrayData<T, true> : public AggregateFunctionGroupSortedArrayDataBase<std::multimap<Int64, T>>
 {
     using Base = AggregateFunctionGroupSortedArrayDataBase<std::multimap<Int64, T>>;
     using Base::Base;
@@ -100,22 +100,19 @@ struct AggregateFunctionGroupSortedArrayData<T, true>
         }
     }
 
-    void serializeItem(WriteBuffer & buf, typename Base::ValueType &value) const override
+    void serializeItem(WriteBuffer & buf, typename Base::ValueType & value) const override
     {
         writeOneItem(buf, value.first);
         writeOneItem(buf, value.second);
     }
 
-    virtual void deserializeItem(ReadBuffer &buf, typename Base::ValueType &value, Arena *arena) const override
+    virtual void deserializeItem(ReadBuffer & buf, typename Base::ValueType & value, Arena * arena) const override
     {
         readOneItem(buf, arena, value.first);
         readOneItem(buf, arena, value.second);
     }
 
-    static T itemValue(typename Base::ValueType &value)
-    {
-        return value.second;
-    }
+    static T itemValue(typename Base::ValueType & value) { return value.second; }
 
     Int64 last = std::numeric_limits<Int64>::max();
 };
@@ -128,25 +125,18 @@ public:
     using Base = AggregateFunctionGroupSortedArrayDataBase<std::multiset<T>>;
     using Base::Base;
 
-    void serializeItem(WriteBuffer & buf, typename Base::ValueType &value) const override
-    {
-        writeOneItem(buf, value);
-    }
+    void serializeItem(WriteBuffer & buf, typename Base::ValueType & value) const override { writeOneItem(buf, value); }
 
-    void deserializeItem(ReadBuffer &buf, typename Base::ValueType &value, Arena *arena) const override
+    void deserializeItem(ReadBuffer & buf, typename Base::ValueType & value, Arena * arena) const override
     {
         readOneItem(buf, arena, value);
     }
 
-    static T itemValue(typename Base::ValueType &value)
-    {
-        return value;
-    }
+    static T itemValue(typename Base::ValueType & value) { return value; }
 };
 
 template <>
-struct AggregateFunctionGroupSortedArrayData<StringRef, false> 
-: public AggregateFunctionGroupSortedArrayDataMSet<StringRef>
+struct AggregateFunctionGroupSortedArrayData<StringRef, false> : public AggregateFunctionGroupSortedArrayDataMSet<StringRef>
 {
     using Base = AggregateFunctionGroupSortedArrayDataMSet<StringRef>;
     using Base::Base;
@@ -158,8 +148,7 @@ struct AggregateFunctionGroupSortedArrayData<StringRef, false>
 };
 
 template <typename T>
-struct AggregateFunctionGroupSortedArrayData<T, false> 
-: public AggregateFunctionGroupSortedArrayDataMSet<T>
+struct AggregateFunctionGroupSortedArrayData<T, false> : public AggregateFunctionGroupSortedArrayDataMSet<T>
 {
     using Base = AggregateFunctionGroupSortedArrayDataMSet<T>;
     using Base::Base;
@@ -175,6 +164,7 @@ struct AggregateFunctionGroupSortedArrayData<T, false>
     }
 
     T last = std::numeric_limits<T>::max();
-};}
+};
+}
 
 #undef DEFAULT_THRESHOLD
