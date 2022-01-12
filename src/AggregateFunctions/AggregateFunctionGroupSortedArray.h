@@ -101,7 +101,8 @@ struct AggregateFunctionGroupSortedArrayData
 };
 
 template <typename T>
-struct AggregateFunctionGroupSortedArrayData<T, true> : public AggregateFunctionGroupSortedArrayDataBase<std::multimap<Int64, T>>
+struct AggregateFunctionGroupSortedArrayData<T, true>
+ : public AggregateFunctionGroupSortedArrayDataBase<std::multimap<Int64, T>>
 {
     using Base = AggregateFunctionGroupSortedArrayDataBase<std::multimap<Int64, T>>;
     using Base::Base;
@@ -138,7 +139,7 @@ struct AggregateFunctionGroupSortedArrayData<T, true> : public AggregateFunction
 
 
 template <typename T>
-class AggregateFunctionGroupSortedArrayData<T, false> : public AggregateFunctionGroupSortedArrayDataBase<std::multiset<T>>
+class AggregateFunctionGroupSortedArrayDataMSet : public AggregateFunctionGroupSortedArrayDataBase<std::multiset<T>>
 {
 public:
     using Base = AggregateFunctionGroupSortedArrayDataBase<std::multiset<T>>;
@@ -146,8 +147,20 @@ public:
 
     void add(T item)
     {
-        Base::values.insert(item);
-        Base::narrowDown();
+        if constexpr (std::is_same_v<T, StringRef>)
+        {
+            Base::values.insert(item);
+            Base::narrowDown();
+        }
+        else
+        {
+            if (item <= last)
+            {
+                Base::values.insert(item);
+                Base::narrowDown();
+                last = *(--Base::values.end());
+            }
+        }    
     }
 
     void serializeItem(WriteBuffer & buf, typename Base::ValueType &value) const override
@@ -164,6 +177,39 @@ public:
     {
         return value;
     }
+
+    T last = std::numeric_limits<T>::max();
+};
+
+template <>
+struct AggregateFunctionGroupSortedArrayData<StringRef, false> 
+: public AggregateFunctionGroupSortedArrayDataMSet<StringRef>
+{
+    using Base = AggregateFunctionGroupSortedArrayDataMSet<StringRef>;
+    using Base::Base;
+    void add(StringRef item)
+    {
+        Base::values.insert(item);
+        Base::narrowDown();
+    }
+};
+
+template <typename T>
+struct AggregateFunctionGroupSortedArrayData<T, false> 
+: public AggregateFunctionGroupSortedArrayDataMSet<T>
+{
+    using Base = AggregateFunctionGroupSortedArrayDataMSet<T>;
+    void add(T item)
+    {
+        if (item <= last)
+        {
+            Base::values.insert(item);
+            Base::narrowDown();
+            last = *(--Base::values.end());
+        }
+    }
+
+    T last = std::numeric_limits<T>::max();
 };
 
 template <typename TT, bool is_plain_column>
@@ -220,11 +266,17 @@ public:
         this->data(place).threshold = threshold;
     }
 
-    String getName() const override { return is_weighted ? "groupSortedArray" : "groupSortedArrayWeighted"; }
+    String getName() const override { return is_weighted ? "groupSortedArrayWeighted" : "groupSortedArray"; }
 
     DataTypePtr getReturnType() const override { return std::make_shared<DataTypeArray>(input_data_type); }
 
-    bool allocatesMemoryInArena() const override { return true; }
+    bool allocatesMemoryInArena() const override
+    {
+        if constexpr (std::is_same_v<T, StringRef>)
+            return true;
+        else
+            return false;
+    }
 
     void add(AggregateDataPtr __restrict, const IColumn **, size_t, Arena *) const override { }
 
