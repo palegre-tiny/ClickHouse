@@ -92,8 +92,9 @@ struct AggregateFunctionGroupSortedArrayData<T, true> : public AggregateFunction
 
     void add(T item, Int64 weight)
     {
-        if (weight <= last)
+        if (weight <= last || count < Base::threshold)
         {
+            ++ count;
             Base::values.insert({weight, item});
             Base::narrowDown();
             last = (--Base::values.end())->first;
@@ -115,6 +116,7 @@ struct AggregateFunctionGroupSortedArrayData<T, true> : public AggregateFunction
     static T itemValue(typename Base::ValueType & value) { return value.second; }
 
     Int64 last = std::numeric_limits<Int64>::max();
+    UInt64 count = 0;
 };
 
 
@@ -155,8 +157,9 @@ struct AggregateFunctionGroupSortedArrayData<T, false> : public AggregateFunctio
 
     void add(T item)
     {
-        if (item <= last)
+        if (item <= last || count < Base::threshold)
         {
+            ++ count;
             Base::values.insert(item);
             Base::narrowDown();
             last = *(--Base::values.end());
@@ -164,6 +167,7 @@ struct AggregateFunctionGroupSortedArrayData<T, false> : public AggregateFunctio
     }
 
     T last = std::numeric_limits<T>::max();
+    UInt64 count = 0;
 };
 }
 
