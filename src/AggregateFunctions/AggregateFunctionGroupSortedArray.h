@@ -5,6 +5,7 @@
 
 #include <AggregateFunctions/IAggregateFunction.h>
 #include "AggregateFunctionGroupSortedArrayData.h"
+#include <base/logger_useful.h>
 
 namespace DB
 {
@@ -32,6 +33,33 @@ inline TT readItem(const IColumn * column, Arena * arena, size_t row)
     }
 }
 
+template <typename T> struct ItemNTH
+{
+    uint64_t a;
+    T b;
+    bool operator < (const ItemNTH& other) const    {return (this->a < other.a);}
+};
+
+template <typename T> void getFirstNElements(T *data, size_t num_elements, size_t threshold, uint64_t *results)
+{
+    threshold = std::min(threshold, num_elements);
+
+    ItemNTH<T> *dataIndexed = new ItemNTH<T>[num_elements];
+    for (size_t i = 0; i < num_elements; i++) {
+        dataIndexed[i].a = data[i];
+        dataIndexed[i].b = i;
+    }
+
+    std::nth_element(dataIndexed, dataIndexed + threshold, dataIndexed + num_elements);
+    std::sort(dataIndexed, dataIndexed + threshold);
+
+    for (size_t i = 0; i < threshold; i++) {
+        results[i] = dataIndexed[i].b;
+    }
+
+    delete []dataIndexed;
+}
+
 template <bool is_plain_column, typename T, bool is_weighted>
 class AggregateFunctionGroupSortedArray : public IAggregateFunctionDataHelper<
                                               AggregateFunctionGroupSortedArrayData<T, is_weighted>,
@@ -39,6 +67,7 @@ class AggregateFunctionGroupSortedArray : public IAggregateFunctionDataHelper<
 {
 protected:
     using State = AggregateFunctionGroupSortedArrayData<T, is_weighted>;
+    using Base = IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T, is_weighted>, AggregateFunctionGroupSortedArray>;
 
     UInt64 threshold;
     DataTypePtr & input_data_type;
@@ -47,7 +76,7 @@ protected:
     static void deserializeAndInsert(StringRef str, IColumn & data_to);
 
 public:
-    AggregateFunctionGroupSortedArray(UInt64 threshold_, UInt64 /*load_factor*/, const DataTypes & argument_types_, const Array & params)
+    AggregateFunctionGroupSortedArray(UInt64 threshold_, const DataTypes & argument_types_, const Array & params)
         : IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T, is_weighted>, AggregateFunctionGroupSortedArray>(
             argument_types_, params)
         , threshold(threshold_)
@@ -57,8 +86,7 @@ public:
 
     void create(AggregateDataPtr place) const override
     {
-        IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T, is_weighted>, AggregateFunctionGroupSortedArray>::create(
-            place);
+        Base::create(place);
         this->data(place).threshold = threshold;
     }
 
@@ -79,30 +107,37 @@ public:
     void addBatchSinglePlace(
         size_t batch_size, AggregateDataPtr place, const IColumn ** columns, Arena * arena, ssize_t if_argument_pos) const override
     {
-        State stateAux(threshold);
-
+        State & data = this->data(place);
         if constexpr (is_weighted)
         {
+            StringRef ref = columns[1]->getRawData();
+            UInt64 values[batch_size];
+            memcpy(values, ref.data, batch_size * sizeof(UInt64));
+            UInt64 bestRows[2] = {0};
+            size_t num_results;
+
             //First store the first n elements with the column number
-            AggregateFunctionGroupSortedArrayData<size_t, true> mapAux(threshold);
             if (if_argument_pos >= 0)
             {
+                UInt64 *value_w = values;
+                
                 const auto & flags = assert_cast<const ColumnUInt8 &>(*columns[if_argument_pos]).getData();
                 for (size_t i = 0; i < batch_size; ++i)
                 {
                     if (flags[i])
-                        mapAux.add(i, readItem<size_t, is_plain_column>(columns[1], arena, i));
+                        *(value_w++) = values[i];
                 }
-            }
-            else
-            {
-                for (size_t i = 0; i < batch_size; ++i)
-                    mapAux.add(i, readItem<size_t, is_plain_column>(columns[1], arena, i));
+
+                batch_size = value_w - values;
             }
 
-            //Now create a new map with the final type extracting values from selected columns
-            for (auto item : mapAux.values)
-                stateAux.add(readItem<T, is_plain_column>(columns[0], arena, item.second), item.first);
+            num_results = std::min(2, int(batch_size));
+            getFirstNElements(values, batch_size, num_results, bestRows);
+            for ( size_t i = 0; i < num_results; i ++)
+            {
+                auto row = bestRows[i];
+                data.add(readItem<T, is_plain_column>(columns[0], arena, row), values[row]);
+            }
         }
         else
         {
@@ -112,21 +147,15 @@ public:
                 for (size_t i = 0; i < batch_size; ++i)
                     if (flags[i])
                     {
-                        auto val = readItem<T, is_plain_column>(columns[0], arena, i);
-                        stateAux.add(val);
+                        data.add(readItem<T, is_plain_column>(columns[0], arena, i));
                     }
             }
             else
             {
                 for (size_t i = 0; i < batch_size; ++i)
-                    stateAux.add(readItem<T, is_plain_column>(columns[0], arena, i));
+                    data.add(readItem<T, is_plain_column>(columns[0], arena, i));
             }
         }
-
-        State & data = this->data(place);
-        mutex.lock();
-        data.merge(stateAux);
-        mutex.unlock();
     }
 
     void merge(AggregateDataPtr __restrict place, ConstAggregateDataPtr rhs, Arena *) const override
@@ -178,5 +207,3 @@ public:
     }
 };
 }
-
-#undef DEFAULT_THRESHOLD

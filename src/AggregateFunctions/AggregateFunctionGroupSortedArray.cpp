@@ -8,7 +8,7 @@
 #include <Common/FieldVisitorConvertToNumber.h>
 
 
-static inline constexpr UInt64 TOP_K_MAX_SIZE = 0xFFFFFF;
+static inline constexpr UInt64 GROUP_SORTED_ARRAY_MAX_SIZE = 0xFFFFFF;
 
 
 namespace DB
@@ -41,7 +41,7 @@ namespace
 
     template <bool is_weighted>
     static IAggregateFunction *
-    createWithExtraTypes(const DataTypes & argument_types, UInt64 threshold, UInt64 load_factor, const Array & params)
+    createWithExtraTypes(const DataTypes & argument_types, UInt64 threshold, const Array & params)
     {
         if (argument_types.empty())
             throw DB::Exception(ErrorCodes::LOGICAL_ERROR, "Got empty arguments list");
@@ -49,18 +49,18 @@ namespace
         WhichDataType which(argument_types[0]);
         if (which.idx == TypeIndex::Date)
             return new AggregateFunctionGroupSortedArrayFieldType<DataTypeDate, is_weighted>(
-                threshold, load_factor, argument_types, params);
+                threshold, argument_types, params);
         if (which.idx == TypeIndex::DateTime)
             return new AggregateFunctionGroupSortedArrayFieldType<DataTypeDateTime, is_weighted>(
-                threshold, load_factor, argument_types, params);
+                threshold, argument_types, params);
 
         if (argument_types[0]->isValueUnambiguouslyRepresentedInContiguousMemoryRegion())
         {
-            return new AggregateFunctionGroupSortedArray<true, StringRef, is_weighted>(threshold, load_factor, argument_types, params);
+            return new AggregateFunctionGroupSortedArray<true, StringRef, is_weighted>(threshold, argument_types, params);
         }
         else
         {
-            return new AggregateFunctionGroupSortedArray<false, StringRef, is_weighted>(threshold, load_factor, argument_types, params);
+            return new AggregateFunctionGroupSortedArray<false, StringRef, is_weighted>(threshold, argument_types, params);
         }
     }
 
@@ -82,7 +82,6 @@ namespace
         }
 
         UInt64 threshold = 10; /// default values
-        UInt64 load_factor = 3;
 
         if (!params.empty())
         {
@@ -91,19 +90,10 @@ namespace
                     "Aggregate function " + name + " requires two parameters or less.", ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH);
 
             UInt64 k = applyVisitor(FieldVisitorConvertToNumber<UInt64>(), params[0]);
-            if (params.size() == 2)
-            {
-                load_factor = applyVisitor(FieldVisitorConvertToNumber<UInt64>(), params[1]);
 
-                if (load_factor < 1)
-                    throw Exception(
-                        "Too small parameter 'load_factor' for aggregate function " + name + ". Minimum: 1",
-                        ErrorCodes::ARGUMENT_OUT_OF_BOUND);
-            }
-
-            if (k > TOP_K_MAX_SIZE || load_factor > TOP_K_MAX_SIZE || k * load_factor > TOP_K_MAX_SIZE)
+            if (k > GROUP_SORTED_ARRAY_MAX_SIZE)
                 throw Exception(
-                    "Too large parameter(s) for aggregate function " + name + ". Maximum: " + toString(TOP_K_MAX_SIZE),
+                    "Too large parameter(s) for aggregate function " + name + ". Maximum: " + toString(GROUP_SORTED_ARRAY_MAX_SIZE),
                     ErrorCodes::ARGUMENT_OUT_OF_BOUND);
 
             if (k == 0)
@@ -113,14 +103,14 @@ namespace
         }
 
         AggregateFunctionPtr res(createWithNumericType<AggregateFunctionGroupSortedArrayNumeric, is_weighted>(
-            *argument_types[0], threshold, load_factor, argument_types, params));
+            *argument_types[0], threshold, argument_types, params));
 
         if (!res)
-            res = AggregateFunctionPtr(createWithExtraTypes<is_weighted>(argument_types, threshold, load_factor, params));
+            res = AggregateFunctionPtr(createWithExtraTypes<is_weighted>(argument_types, threshold, params));
 
         if (!res)
             throw Exception(
-                "Illegal type " + argument_types[0]->getName() + " of argument for aggregate function 4 " + name,
+                "Illegal type " + argument_types[0]->getName() + " of argument for aggregate function " + name,
                 ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
 
         return res;

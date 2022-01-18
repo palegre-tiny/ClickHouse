@@ -5,8 +5,9 @@
 #include <IO/VarInt.h>
 #include <IO/WriteBuffer.h>
 #include <IO/WriteHelpers.h>
+#include <base/logger_useful.h>
 
-#define DEFAULT_THRESHOLD 10
+static inline constexpr UInt64 GROUP_SORTED_DEFAULT_THRESHOLD = 0xFFFFFF;
 
 namespace DB
 {
@@ -14,7 +15,7 @@ template <typename Storage>
 struct AggregateFunctionGroupSortedArrayDataBase
 {
     typedef typename Storage::value_type ValueType;
-    AggregateFunctionGroupSortedArrayDataBase(UInt64 threshold_ = DEFAULT_THRESHOLD) : threshold(threshold_) { }
+    AggregateFunctionGroupSortedArrayDataBase(UInt64 threshold_ = GROUP_SORTED_DEFAULT_THRESHOLD) : threshold(threshold_) { }
 
     virtual ~AggregateFunctionGroupSortedArrayDataBase() { }
     inline void narrowDown()
@@ -67,7 +68,7 @@ static void writeOneItem(WriteBuffer & buf, T item)
     if constexpr (std::is_same_v<T, StringRef>)
         writeBinary(item, buf);
     else
-        writeVarUInt(item, buf);
+        writeBinary(item, buf);
 }
 
 template <typename T>
@@ -76,7 +77,7 @@ static void readOneItem(ReadBuffer & buf, Arena * arena, T item)
     if constexpr (std::is_same_v<T, StringRef>)
         item = readStringBinaryInto(*arena, buf);
     else
-        readVarUInt(item, buf);
+        readBinary(item, buf);
 }
 
 template <typename T, bool is_weighted>
@@ -92,13 +93,8 @@ struct AggregateFunctionGroupSortedArrayData<T, true> : public AggregateFunction
 
     void add(T item, Int64 weight)
     {
-        if (weight <= last || count < Base::threshold)
-        {
-            ++ count;
-            Base::values.insert({weight, item});
-            Base::narrowDown();
-            last = (--Base::values.end())->first;
-        }
+        Base::values.insert({weight, item});
+        Base::narrowDown();
     }
 
     void serializeItem(WriteBuffer & buf, typename Base::ValueType & value) const override
@@ -114,18 +110,19 @@ struct AggregateFunctionGroupSortedArrayData<T, true> : public AggregateFunction
     }
 
     static T itemValue(typename Base::ValueType & value) { return value.second; }
-
-    Int64 last = std::numeric_limits<Int64>::max();
-    UInt64 count = 0;
 };
 
-
 template <typename T>
-class AggregateFunctionGroupSortedArrayDataMSet : public AggregateFunctionGroupSortedArrayDataBase<std::multiset<T>>
+struct AggregateFunctionGroupSortedArrayData<T, false> : public AggregateFunctionGroupSortedArrayDataBase<std::multiset<T>>
 {
-public:
     using Base = AggregateFunctionGroupSortedArrayDataBase<std::multiset<T>>;
     using Base::Base;
+
+    void add(T item)
+    {
+        Base::values.insert(item);
+        Base::narrowDown();
+    }
 
     void serializeItem(WriteBuffer & buf, typename Base::ValueType & value) const override { writeOneItem(buf, value); }
 
@@ -136,39 +133,5 @@ public:
 
     static T itemValue(typename Base::ValueType & value) { return value; }
 };
-
-template <>
-struct AggregateFunctionGroupSortedArrayData<StringRef, false> : public AggregateFunctionGroupSortedArrayDataMSet<StringRef>
-{
-    using Base = AggregateFunctionGroupSortedArrayDataMSet<StringRef>;
-    using Base::Base;
-    void add(StringRef item)
-    {
-        Base::values.insert(item);
-        Base::narrowDown();
-    }
-};
-
-template <typename T>
-struct AggregateFunctionGroupSortedArrayData<T, false> : public AggregateFunctionGroupSortedArrayDataMSet<T>
-{
-    using Base = AggregateFunctionGroupSortedArrayDataMSet<T>;
-    using Base::Base;
-
-    void add(T item)
-    {
-        if (item <= last || count < Base::threshold)
-        {
-            ++ count;
-            Base::values.insert(item);
-            Base::narrowDown();
-            last = *(--Base::values.end());
-        }
-    }
-
-    T last = std::numeric_limits<T>::max();
-    UInt64 count = 0;
-};
 }
 
-#undef DEFAULT_THRESHOLD
