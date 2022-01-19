@@ -5,12 +5,52 @@
 #include <IO/VarInt.h>
 #include <IO/WriteBuffer.h>
 #include <IO/WriteHelpers.h>
-#include <base/logger_useful.h>
+
 
 static inline constexpr UInt64 GROUP_SORTED_DEFAULT_THRESHOLD = 0xFFFFFF;
 
 namespace DB
 {
+
+template <typename T>static void writeOneItem(WriteBuffer & buf, T item)
+{
+    if constexpr (std::numeric_limits<T>::is_signed)
+    {
+        writeVarInt(item, buf);
+    }
+    else{
+        writeVarUInt(item, buf);
+    }
+}
+
+
+static void writeOneItem(WriteBuffer & buf, const StringRef &item)
+{
+    writeBinary(item, buf);
+}
+
+template <typename T>
+static void readOneItem(ReadBuffer & buf, Arena * /*arena*/, T &item)
+{
+    if constexpr (std::numeric_limits<T>::is_signed)
+    {
+        DB::Int64 val;
+        readVarT(val, buf);
+        item = val;
+    }
+    else
+    {
+        DB::UInt64 val;
+        readVarT(val, buf);
+        item = val;
+    }
+}
+
+static void readOneItem(ReadBuffer & buf, Arena * arena, StringRef &item)
+{
+    item = readStringBinaryInto(*arena, buf);
+}
+
 template <typename Storage>
 struct AggregateFunctionGroupSortedArrayDataBase
 {
@@ -32,7 +72,7 @@ struct AggregateFunctionGroupSortedArrayDataBase
 
     void serialize(WriteBuffer & buf) const
     {
-        writeVarT(UInt64(values.size()), buf);
+        writeOneItem(buf, UInt64(values.size()));
         for (auto value : values)
         {
             serializeItem(buf, value);
@@ -40,19 +80,17 @@ struct AggregateFunctionGroupSortedArrayDataBase
     }
 
     virtual void serializeItem(WriteBuffer & buf, ValueType & val) const = 0;
-    virtual void deserializeItem(ReadBuffer & buf, ValueType & val, Arena * arena) const = 0;
+    virtual ValueType deserializeItem(ReadBuffer & buf, Arena * arena) const = 0;
 
     void deserialize(ReadBuffer & buf, Arena * arena)
     {
         values.clear();
         UInt64 length;
-        readVarUInt(length, buf);
+        readOneItem(buf, nullptr, length);
 
         while (length--)
         {
-            ValueType value;
-            deserializeItem(buf, value, arena);
-            values.insert(value);
+            values.insert(deserializeItem(buf, arena));
         }
 
         narrowDown();
@@ -61,24 +99,6 @@ struct AggregateFunctionGroupSortedArrayDataBase
     UInt64 threshold;
     Storage values;
 };
-
-template <typename T>
-static void writeOneItem(WriteBuffer & buf, T item)
-{
-    if constexpr (std::is_same_v<T, StringRef>)
-        writeBinary(item, buf);
-    else
-        writeBinary(item, buf);
-}
-
-template <typename T>
-static void readOneItem(ReadBuffer & buf, Arena * arena, T item)
-{
-    if constexpr (std::is_same_v<T, StringRef>)
-        item = readStringBinaryInto(*arena, buf);
-    else
-        readBinary(item, buf);
-}
 
 template <typename T, bool is_weighted>
 struct AggregateFunctionGroupSortedArrayData
@@ -103,10 +123,14 @@ struct AggregateFunctionGroupSortedArrayData<T, true> : public AggregateFunction
         writeOneItem(buf, value.second);
     }
 
-    virtual void deserializeItem(ReadBuffer & buf, typename Base::ValueType & value, Arena * arena) const override
+    virtual typename Base::ValueType deserializeItem(ReadBuffer & buf, Arena * arena) const override
     {
-        readOneItem(buf, arena, value.first);
-        readOneItem(buf, arena, value.second);
+        Int64 first;
+        T second;
+        readOneItem(buf, arena, first);
+        readOneItem(buf, arena, second);
+
+        return {first, second };
     }
 
     static T itemValue(typename Base::ValueType & value) { return value.second; }
@@ -126,9 +150,11 @@ struct AggregateFunctionGroupSortedArrayData<T, false> : public AggregateFunctio
 
     void serializeItem(WriteBuffer & buf, typename Base::ValueType & value) const override { writeOneItem(buf, value); }
 
-    void deserializeItem(ReadBuffer & buf, typename Base::ValueType & value, Arena * arena) const override
+    typename Base::ValueType deserializeItem(ReadBuffer & buf, Arena * arena) const override
     {
+        T value;
         readOneItem(buf, arena, value);
+        return value;
     }
 
     static T itemValue(typename Base::ValueType & value) { return value; }

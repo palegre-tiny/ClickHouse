@@ -32,7 +32,7 @@ inline TT readItem(const IColumn * column, Arena * arena, size_t row)
         return column->getUInt(row);
     }
 }
-
+/*
 template <typename T> struct ItemNTH
 {
     uint64_t a;
@@ -58,6 +58,30 @@ template <typename T> void getFirstNElements(T *data, size_t num_elements, size_
     }
 
     delete []dataIndexed;
+}
+*/
+
+template <typename T>void getFirstNElements(const T *data, int num_elements, int threshold, uint64_t *results)
+{
+    threshold = std::min(num_elements, threshold);
+    int current_max = 0;
+    int cur;
+    int z;
+    for ( int i = 0; i < num_elements; i ++) {
+        //We starting from the highest values and we look for the immediately lower than the given one
+        for (cur = current_max; cur > 0 && (data[i] < data[results[cur - 1]]); cur--);
+
+        if (cur < threshold) {
+            //Move all the higher values 1 position to the right
+            for (z = current_max -1; z >= cur; z--)
+                results[z + 1] = results[z];
+            if (++current_max > threshold)
+                current_max = threshold;
+
+            //insert element into the given position
+            results[cur] = i;
+        }
+    }
 }
 
 template <bool is_plain_column, typename T, bool is_weighted>
@@ -113,7 +137,7 @@ public:
             StringRef ref = columns[1]->getRawData();
             UInt64 values[batch_size];
             memcpy(values, ref.data, batch_size * sizeof(UInt64));
-            UInt64 bestRows[2] = {0};
+            UInt64 *bestRows = new UInt64[this->threshold];
             size_t num_results;
 
             //First store the first n elements with the column number
@@ -131,13 +155,14 @@ public:
                 batch_size = value_w - values;
             }
 
-            num_results = std::min(2, int(batch_size));
+            num_results = std::min(this->threshold, batch_size);
             getFirstNElements(values, batch_size, num_results, bestRows);
             for ( size_t i = 0; i < num_results; i ++)
             {
                 auto row = bestRows[i];
                 data.add(readItem<T, is_plain_column>(columns[0], arena, row), values[row]);
             }
+            delete []bestRows;
         }
         else
         {
