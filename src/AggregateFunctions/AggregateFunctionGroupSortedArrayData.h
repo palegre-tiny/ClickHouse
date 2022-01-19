@@ -11,26 +11,27 @@ static inline constexpr UInt64 GROUP_SORTED_DEFAULT_THRESHOLD = 0xFFFFFF;
 
 namespace DB
 {
-
-template <typename T>static void writeOneItem(WriteBuffer & buf, T item)
+template <typename T>
+static void writeOneItem(WriteBuffer & buf, T item)
 {
     if constexpr (std::numeric_limits<T>::is_signed)
     {
         writeVarInt(item, buf);
     }
-    else{
+    else
+    {
         writeVarUInt(item, buf);
     }
 }
 
 
-static void writeOneItem(WriteBuffer & buf, const StringRef &item)
+static void writeOneItem(WriteBuffer & buf, const StringRef & item)
 {
     writeBinary(item, buf);
 }
 
 template <typename T>
-static void readOneItem(ReadBuffer & buf, Arena * /*arena*/, T &item)
+static void readOneItem(ReadBuffer & buf, Arena * /*arena*/, T & item)
 {
     if constexpr (std::numeric_limits<T>::is_signed)
     {
@@ -46,7 +47,7 @@ static void readOneItem(ReadBuffer & buf, Arena * /*arena*/, T &item)
     }
 }
 
-static void readOneItem(ReadBuffer & buf, Arena * arena, StringRef &item)
+static void readOneItem(ReadBuffer & buf, Arena * arena, StringRef & item)
 {
     item = readStringBinaryInto(*arena, buf);
 }
@@ -130,7 +131,7 @@ struct AggregateFunctionGroupSortedArrayData<T, true> : public AggregateFunction
         readOneItem(buf, arena, first);
         readOneItem(buf, arena, second);
 
-        return {first, second };
+        return {first, second};
     }
 
     static T itemValue(typename Base::ValueType & value) { return value.second; }
@@ -160,4 +161,3 @@ struct AggregateFunctionGroupSortedArrayData<T, false> : public AggregateFunctio
     static T itemValue(typename Base::ValueType & value) { return value; }
 };
 }
-

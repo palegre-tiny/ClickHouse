@@ -4,8 +4,8 @@
 #include <DataTypes/DataTypeArray.h>
 
 #include <AggregateFunctions/IAggregateFunction.h>
-#include "AggregateFunctionGroupSortedArrayData.h"
 #include <base/logger_useful.h>
+#include "AggregateFunctionGroupSortedArrayData.h"
 
 namespace DB
 {
@@ -61,19 +61,23 @@ template <typename T> void getFirstNElements(T *data, size_t num_elements, size_
 }
 */
 
-template <typename T>void getFirstNElements(const T *data, int num_elements, int threshold, uint64_t *results)
+template <typename T>
+void getFirstNElements(const T * data, int num_elements, int threshold, uint64_t * results)
 {
     threshold = std::min(num_elements, threshold);
     int current_max = 0;
     int cur;
     int z;
-    for ( int i = 0; i < num_elements; i ++) {
+    for (int i = 0; i < num_elements; i++)
+    {
         //We starting from the highest values and we look for the immediately lower than the given one
-        for (cur = current_max; cur > 0 && (data[i] < data[results[cur - 1]]); cur--);
+        for (cur = current_max; cur > 0 && (data[i] < data[results[cur - 1]]); cur--)
+            ;
 
-        if (cur < threshold) {
+        if (cur < threshold)
+        {
             //Move all the higher values 1 position to the right
-            for (z = current_max -1; z >= cur; z--)
+            for (z = current_max - 1; z >= cur; z--)
                 results[z + 1] = results[z];
             if (++current_max > threshold)
                 current_max = threshold;
@@ -137,14 +141,14 @@ public:
             StringRef ref = columns[1]->getRawData();
             UInt64 values[batch_size];
             memcpy(values, ref.data, batch_size * sizeof(UInt64));
-            UInt64 *bestRows = new UInt64[this->threshold];
+            UInt64 * bestRows = new UInt64[this->threshold];
             size_t num_results;
 
             //First store the first n elements with the column number
             if (if_argument_pos >= 0)
             {
-                UInt64 *value_w = values;
-                
+                UInt64 * value_w = values;
+
                 const auto & flags = assert_cast<const ColumnUInt8 &>(*columns[if_argument_pos]).getData();
                 for (size_t i = 0; i < batch_size; ++i)
                 {
@@ -157,12 +161,12 @@ public:
 
             num_results = std::min(this->threshold, batch_size);
             getFirstNElements(values, batch_size, num_results, bestRows);
-            for ( size_t i = 0; i < num_results; i ++)
+            for (size_t i = 0; i < num_results; i++)
             {
                 auto row = bestRows[i];
                 data.add(readItem<T, is_plain_column>(columns[0], arena, row), values[row]);
             }
-            delete []bestRows;
+            delete[] bestRows;
         }
         else
         {
