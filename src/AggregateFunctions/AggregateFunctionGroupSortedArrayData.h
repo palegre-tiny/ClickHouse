@@ -24,7 +24,6 @@ static void writeOneItem(WriteBuffer & buf, T item)
     }
 }
 
-
 static void writeOneItem(WriteBuffer & buf, const StringRef & item)
 {
     writeBinary(item, buf);

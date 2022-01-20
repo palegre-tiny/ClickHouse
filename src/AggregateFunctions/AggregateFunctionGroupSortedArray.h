@@ -130,7 +130,18 @@ public:
             return false;
     }
 
-    void add(AggregateDataPtr __restrict, const IColumn **, size_t, Arena *) const override { }
+    void add(AggregateDataPtr __restrict place, const IColumn **columns, size_t row_num, Arena *arena) const override { 
+        State & data = this->data(place);
+        if constexpr (is_weighted)
+        {
+            data.add(readItem<T, is_plain_column>(columns[0], arena, row_num),
+                     readItem<UInt64, false>(columns[1], arena, row_num));
+        }
+        else
+        {
+             data.add(readItem<T, is_plain_column>(columns[0], arena, row_num));
+        }
+    }
 
     void addBatchSinglePlace(
         size_t batch_size, AggregateDataPtr place, const IColumn ** columns, Arena * arena, ssize_t if_argument_pos) const override
@@ -212,26 +223,25 @@ public:
         int old_size = offsets_to.back();
         offsets_to.push_back(old_size + values.size());
 
-        if constexpr (std::is_same_v<T, StringRef>)
+        IColumn & data_to = arr_to.getData();
+        for (auto value : values)
         {
-            IColumn & data_to = arr_to.getData();
-            for (auto value : values)
+            if constexpr (std::is_same_v<T, StringRef>)
             {
                 auto str = State::itemValue(value);
                 if constexpr (is_plain_column)
+                {
                     data_to.insertData(str.data, str.size);
+                }
                 else
+                {
                     data_to.deserializeAndInsertFromArena(str.data);
+                }
             }
-        }
-        else
-        {
-            typename ColumnVector<T>::Container & data_to = assert_cast<ColumnVector<T> &>(arr_to.getData()).getData();
-            data_to.resize(old_size + values.size());
-            size_t next = old_size;
-
-            for (auto value : values)
-                data_to[next++] = State::itemValue(value);
+            else
+            {
+                data_to.insert(State::itemValue(value));
+            }
         }
     }
 };
