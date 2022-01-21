@@ -100,18 +100,18 @@ struct AggregateFunctionGroupSortedArrayDataBase
     Storage values;
 };
 
-template <typename T, bool is_weighted>
+template <typename T, bool is_weighted, typename TIndex>
 struct AggregateFunctionGroupSortedArrayData
 {
 };
 
-template <typename T>
-struct AggregateFunctionGroupSortedArrayData<T, true> : public AggregateFunctionGroupSortedArrayDataBase<std::multimap<Int64, T>>
+template <typename T, typename TIndex>
+struct AggregateFunctionGroupSortedArrayData<T, true, TIndex> : public AggregateFunctionGroupSortedArrayDataBase<std::multimap<TIndex, T>>
 {
-    using Base = AggregateFunctionGroupSortedArrayDataBase<std::multimap<Int64, T>>;
+    using Base = AggregateFunctionGroupSortedArrayDataBase<std::multimap<TIndex, T>>;
     using Base::Base;
 
-    void add(T item, Int64 weight)
+    void add(T item, TIndex weight)
     {
         Base::values.insert({weight, item});
         Base::narrowDown();
@@ -136,8 +136,8 @@ struct AggregateFunctionGroupSortedArrayData<T, true> : public AggregateFunction
     static T itemValue(typename Base::ValueType & value) { return value.second; }
 };
 
-template <typename T>
-struct AggregateFunctionGroupSortedArrayData<T, false> : public AggregateFunctionGroupSortedArrayDataBase<std::multiset<T>>
+template <typename T, typename TIndex>
+struct AggregateFunctionGroupSortedArrayData<T, false, TIndex> : public AggregateFunctionGroupSortedArrayDataBase<std::multiset<T>>
 {
     using Base = AggregateFunctionGroupSortedArrayDataBase<std::multiset<T>>;
     using Base::Base;

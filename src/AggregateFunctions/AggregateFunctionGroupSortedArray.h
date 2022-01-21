@@ -5,7 +5,7 @@
 
 #include <AggregateFunctions/IAggregateFunction.h>
 #include <base/logger_useful.h>
-#include "AggregateFunctionGroupSortedArrayData.h"
+#include <AggregateFunctions/AggregateFunctionGroupSortedArrayData.h>
 
 namespace DB
 {
@@ -35,14 +35,14 @@ inline TT readItem(const IColumn * column, Arena * arena, size_t row)
 /*
 template <typename T> struct ItemNTH
 {
-    uint64_t a;
-    T b;
+    T a;
+    UInt64 b;
     bool operator < (const ItemNTH& other) const    {return (this->a < other.a);}
 };
 
 template <typename T> void getFirstNElements(T *data, size_t num_elements, size_t threshold, uint64_t *results)
 {
-    threshold = std::min(threshold, num_elements);
+    threshold = std::min(threshold, num_elements);    
 
     ItemNTH<T> *dataIndexed = new ItemNTH<T>[num_elements];
     for (size_t i = 0; i < num_elements; i++) {
@@ -88,14 +88,14 @@ void getFirstNElements(const T * data, int num_elements, int threshold, uint64_t
     }
 }
 
-template <bool is_plain_column, typename T, bool is_weighted>
+template <bool is_plain_column, typename T, bool is_weighted, typename TIndex>
 class AggregateFunctionGroupSortedArray : public IAggregateFunctionDataHelper<
-                                              AggregateFunctionGroupSortedArrayData<T, is_weighted>,
-                                              AggregateFunctionGroupSortedArray<is_plain_column, T, is_weighted>>
+                                              AggregateFunctionGroupSortedArrayData<T, is_weighted, TIndex>,
+                                              AggregateFunctionGroupSortedArray<is_plain_column, T, is_weighted, TIndex>>
 {
 protected:
-    using State = AggregateFunctionGroupSortedArrayData<T, is_weighted>;
-    using Base = IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T, is_weighted>, AggregateFunctionGroupSortedArray>;
+    using State = AggregateFunctionGroupSortedArrayData<T, is_weighted, TIndex>;
+    using Base = IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T, is_weighted, TIndex>, AggregateFunctionGroupSortedArray>;
 
     UInt64 threshold;
     DataTypePtr & input_data_type;
@@ -105,7 +105,7 @@ protected:
 
 public:
     AggregateFunctionGroupSortedArray(UInt64 threshold_, const DataTypes & argument_types_, const Array & params)
-        : IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T, is_weighted>, AggregateFunctionGroupSortedArray>(
+        : IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T, is_weighted, TIndex>, AggregateFunctionGroupSortedArray>(
             argument_types_, params)
         , threshold(threshold_)
         , input_data_type(this->argument_types[0])
@@ -135,7 +135,7 @@ public:
         if constexpr (is_weighted)
         {
             data.add(readItem<T, is_plain_column>(columns[0], arena, row_num),
-                     readItem<UInt64, false>(columns[1], arena, row_num));
+                     readItem<TIndex, false>(columns[1], arena, row_num));
         }
         else
         {
@@ -150,7 +150,7 @@ public:
         if constexpr (is_weighted)
         {
             StringRef ref = columns[1]->getRawData();
-            UInt64 values[batch_size];
+            TIndex values[batch_size];
             memcpy(values, ref.data, batch_size * sizeof(UInt64));
             UInt64 * bestRows = new UInt64[this->threshold];
             size_t num_results;
@@ -158,7 +158,7 @@ public:
             //First store the first n elements with the column number
             if (if_argument_pos >= 0)
             {
-                UInt64 * value_w = values;
+                TIndex * value_w = values;
 
                 const auto & flags = assert_cast<const ColumnUInt8 &>(*columns[if_argument_pos]).getData();
                 for (size_t i = 0; i < batch_size; ++i)

@@ -9,6 +9,7 @@
 
 
 static inline constexpr UInt64 GROUP_SORTED_ARRAY_MAX_SIZE = 0xFFFFFF;
+static inline constexpr UInt64 GROUP_SORTED_ARRAY_DEFAULT_THRESHOLD = 10;
 
 
 namespace DB
@@ -26,20 +27,20 @@ namespace ErrorCodes
 
 namespace
 {
-    template <typename T, bool is_weighted>
-    class AggregateFunctionGroupSortedArrayNumeric : public AggregateFunctionGroupSortedArray<false, T, is_weighted>
+    template <typename T, bool is_weighted, typename TIndex>
+    class AggregateFunctionGroupSortedArrayNumeric : public AggregateFunctionGroupSortedArray<false, T, is_weighted, TIndex>
     {
-        using AggregateFunctionGroupSortedArray<false, T, is_weighted>::AggregateFunctionGroupSortedArray;
+        using AggregateFunctionGroupSortedArray<false, T, is_weighted, TIndex>::AggregateFunctionGroupSortedArray;
     };
 
-    template <typename T, bool is_weighted>
-    class AggregateFunctionGroupSortedArrayFieldType : public AggregateFunctionGroupSortedArray<false, typename T::FieldType, is_weighted>
+    template <typename T, bool is_weighted, typename TIndex>
+    class AggregateFunctionGroupSortedArrayFieldType : public AggregateFunctionGroupSortedArray<false, typename T::FieldType, is_weighted, TIndex>
     {
-        using AggregateFunctionGroupSortedArray<false, typename T::FieldType, is_weighted>::AggregateFunctionGroupSortedArray;
+        using AggregateFunctionGroupSortedArray<false, typename T::FieldType, is_weighted, TIndex>::AggregateFunctionGroupSortedArray;
         DataTypePtr getReturnType() const override { return std::make_shared<DataTypeArray>(std::make_shared<T>()); }
     };
 
-    template <bool is_weighted>
+    template <bool is_weighted, typename TIndex>
     static IAggregateFunction *
     createWithExtraTypes(const DataTypes & argument_types, UInt64 threshold, const Array & params)
     {
@@ -48,27 +49,58 @@ namespace
 
         WhichDataType which(argument_types[0]);
         if (which.idx == TypeIndex::Date)
-            return new AggregateFunctionGroupSortedArrayFieldType<DataTypeDate, is_weighted>(
+            return new AggregateFunctionGroupSortedArrayFieldType<DataTypeDate, is_weighted, TIndex>(
                 threshold, argument_types, params);
         if (which.idx == TypeIndex::DateTime)
-            return new AggregateFunctionGroupSortedArrayFieldType<DataTypeDateTime, is_weighted>(
+            return new AggregateFunctionGroupSortedArrayFieldType<DataTypeDateTime, is_weighted, TIndex>(
                 threshold, argument_types, params);
 
         if (argument_types[0]->isValueUnambiguouslyRepresentedInContiguousMemoryRegion())
         {
-            return new AggregateFunctionGroupSortedArray<true, StringRef, is_weighted>(threshold, argument_types, params);
+            return new AggregateFunctionGroupSortedArray<true, StringRef, is_weighted, TIndex>(threshold, argument_types, params);
         }
         else
         {
-            return new AggregateFunctionGroupSortedArray<false, StringRef, is_weighted>(threshold, argument_types, params);
+            return new AggregateFunctionGroupSortedArray<false, StringRef, is_weighted, TIndex>(threshold, argument_types, params);
         }
+    }
+
+    template <template <typename, bool, typename> class AggregateFunctionTemplate, bool bool_param, typename TIndex, typename... TArgs>
+    static IAggregateFunction * createWithNumericType2(const IDataType & argument_type, TArgs && ... args)
+    {
+        WhichDataType which(argument_type);
+    #define DISPATCH(TYPE) \
+        if (which.idx == TypeIndex::TYPE) return new AggregateFunctionTemplate<TYPE, bool_param, TIndex>(std::forward<TArgs>(args)...);
+        FOR_NUMERIC_TYPES(DISPATCH)
+    #undef DISPATCH
+        if (which.idx == TypeIndex::Enum8) return new AggregateFunctionTemplate<Int8, bool_param, TIndex>(std::forward<TArgs>(args)...);
+        if (which.idx == TypeIndex::Enum16) return new AggregateFunctionTemplate<Int16, bool_param, TIndex>(std::forward<TArgs>(args)...);
+        return nullptr;
+    }
+
+    template <bool is_weighted, typename TIndex>
+    AggregateFunctionPtr createAggregateFunctionGroupSortedArrayTyped(
+        const std::string & name, const DataTypes & argument_types, const Array & params, UInt64 threshold)
+    {
+         AggregateFunctionPtr res(createWithNumericType2<AggregateFunctionGroupSortedArrayNumeric, is_weighted, TIndex>(
+            *argument_types[0], threshold, argument_types, params));
+
+        if (!res)
+            res = AggregateFunctionPtr(createWithExtraTypes<is_weighted, TIndex>(argument_types, threshold, params));
+
+        if (!res)
+            throw Exception(
+                "Illegal type " + argument_types[0]->getName() + " of argument for aggregate function " + name,
+                ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
+        
+        return res;
     }
 
     template <bool is_weighted>
     AggregateFunctionPtr createAggregateFunctionGroupSortedArray(
         const std::string & name, const DataTypes & argument_types, const Array & params, const Settings *)
     {
-        if (!is_weighted)
+        if constexpr(!is_weighted)
         {
             assertUnary(name, argument_types);
         }
@@ -81,7 +113,7 @@ namespace
                     ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
         }
 
-        UInt64 threshold = 10; /// default values
+        UInt64 threshold = GROUP_SORTED_ARRAY_DEFAULT_THRESHOLD;
 
         if (!params.empty())
         {
@@ -102,18 +134,10 @@ namespace
             threshold = k;
         }
 
-        AggregateFunctionPtr res(createWithNumericType<AggregateFunctionGroupSortedArrayNumeric, is_weighted>(
-            *argument_types[0], threshold, argument_types, params));
-
-        if (!res)
-            res = AggregateFunctionPtr(createWithExtraTypes<is_weighted>(argument_types, threshold, params));
-
-        if (!res)
-            throw Exception(
-                "Illegal type " + argument_types[0]->getName() + " of argument for aggregate function " + name,
-                ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
-
-        return res;
+        if (is_weighted && isUnsignedInteger(argument_types[1]))
+            return createAggregateFunctionGroupSortedArrayTyped<is_weighted, UInt64>(name, argument_types, params, threshold);
+        else
+            return createAggregateFunctionGroupSortedArrayTyped<is_weighted, Int64>(name, argument_types, params, threshold);
     }
 }
 
