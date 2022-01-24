@@ -3,16 +3,15 @@
 #include <Columns/ColumnArray.h>
 #include <DataTypes/DataTypeArray.h>
 
-#include <AggregateFunctions/IAggregateFunction.h>
-#include <base/logger_useful.h>
 #include <AggregateFunctions/AggregateFunctionGroupSortedArrayData.h>
+#include <AggregateFunctions/IAggregateFunction.h>
 
 namespace DB
 {
-template <typename TT, bool is_plain_column>
-inline TT readItem(const IColumn * column, Arena * arena, size_t row)
+template <typename T, bool is_plain_column>
+inline T readItem(const IColumn * column, Arena * arena, size_t row)
 {
-    if constexpr (std::is_same_v<TT, StringRef>)
+    if constexpr (std::is_same_v<T, StringRef>)
     {
         if constexpr (is_plain_column)
         {
@@ -32,37 +31,9 @@ inline TT readItem(const IColumn * column, Arena * arena, size_t row)
         return column->getUInt(row);
     }
 }
-/*
-template <typename T> struct ItemNTH
-{
-    T a;
-    UInt64 b;
-    bool operator < (const ItemNTH& other) const    {return (this->a < other.a);}
-};
-
-template <typename T> void getFirstNElements(T *data, size_t num_elements, size_t threshold, uint64_t *results)
-{
-    threshold = std::min(threshold, num_elements);    
-
-    ItemNTH<T> *dataIndexed = new ItemNTH<T>[num_elements];
-    for (size_t i = 0; i < num_elements; i++) {
-        dataIndexed[i].a = data[i];
-        dataIndexed[i].b = i;
-    }
-
-    std::nth_element(dataIndexed, dataIndexed + threshold, dataIndexed + num_elements);
-    std::sort(dataIndexed, dataIndexed + threshold);
-
-    for (size_t i = 0; i < threshold; i++) {
-        results[i] = dataIndexed[i].b;
-    }
-
-    delete []dataIndexed;
-}
-*/
 
 template <typename T>
-void getFirstNElements(const T * data, int num_elements, int threshold, uint64_t * results)
+void getFirstNElements(const T * data, int num_elements, int threshold, UInt64 * results)
 {
     threshold = std::min(num_elements, threshold);
     int current_max = 0;
@@ -70,7 +41,7 @@ void getFirstNElements(const T * data, int num_elements, int threshold, uint64_t
     int z;
     for (int i = 0; i < num_elements; i++)
     {
-        //We starting from the highest values and we look for the immediately lower than the given one
+        //Starting from the highest values and we look for the immediately lower than the given one
         for (cur = current_max; cur > 0 && (data[i] < data[results[cur - 1]]); cur--)
             ;
 
@@ -95,7 +66,8 @@ class AggregateFunctionGroupSortedArray : public IAggregateFunctionDataHelper<
 {
 protected:
     using State = AggregateFunctionGroupSortedArrayData<T, is_weighted, TIndex>;
-    using Base = IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T, is_weighted, TIndex>, AggregateFunctionGroupSortedArray>;
+    using Base
+        = IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T, is_weighted, TIndex>, AggregateFunctionGroupSortedArray>;
 
     UInt64 threshold;
     DataTypePtr & input_data_type;
@@ -130,16 +102,16 @@ public:
             return false;
     }
 
-    void add(AggregateDataPtr __restrict place, const IColumn **columns, size_t row_num, Arena *arena) const override { 
+    void add(AggregateDataPtr __restrict place, const IColumn ** columns, size_t row_num, Arena * arena) const override
+    {
         State & data = this->data(place);
         if constexpr (is_weighted)
         {
-            data.add(readItem<T, is_plain_column>(columns[0], arena, row_num),
-                     readItem<TIndex, false>(columns[1], arena, row_num));
+            data.add(readItem<T, is_plain_column>(columns[0], arena, row_num), readItem<TIndex, false>(columns[1], arena, row_num));
         }
         else
         {
-             data.add(readItem<T, is_plain_column>(columns[0], arena, row_num));
+            data.add(readItem<T, is_plain_column>(columns[0], arena, row_num));
         }
     }
 
@@ -185,15 +157,19 @@ public:
             {
                 const auto & flags = assert_cast<const ColumnUInt8 &>(*columns[if_argument_pos]).getData();
                 for (size_t i = 0; i < batch_size; ++i)
+                {
                     if (flags[i])
                     {
                         data.add(readItem<T, is_plain_column>(columns[0], arena, i));
                     }
+                }
             }
             else
             {
                 for (size_t i = 0; i < batch_size; ++i)
+                {
                     data.add(readItem<T, is_plain_column>(columns[0], arena, i));
+                }
             }
         }
     }
@@ -220,8 +196,7 @@ public:
         ColumnArray::Offsets & offsets_to = arr_to.getOffsets();
 
         auto & values = this->data(place).values;
-        int old_size = offsets_to.back();
-        offsets_to.push_back(old_size + values.size());
+        offsets_to.push_back(offsets_to.back() + values.size());
 
         IColumn & data_to = arr_to.getData();
         for (auto value : values)

@@ -1,0 +1,25 @@
+<test>
+    <settings>
+        <max_threads>10</max_threads>
+    </settings>
+    <substitutions>
+        <substitution>
+            <name>items</name>
+            <values>
+                <value>100000</value>
+                <value>10000000</value>
+                <value>1000000000</value>
+            </values>
+        </substitution>
+    </substitutions>
+
+    <create_query>CREATE TABLE default.test ( `id` UInt64, `value` UInt64, `text` string ) ENGINE = Memory</create_query>
+    <fill_query>INSERT INTO test SELECT number as id, rand64() as value, string(number) as text FROM numbers({items}})</fill_query>
+    <query>SELECT groupSortedArrayWeighted(10)(id, value) FROM test</query>
+    <query>SELECT groupSortedArrayWeighted(10)(id, -value) FROM test</query>
+    <query>SELECT groupSortedArrayWeighted(10)(text, value) FROM test</query>
+    <query>SELECT groupSortedArrayWeighted(10)((id, text), value) FROM test</query>
+    <query>SELECT groupSortedArrayWeighted(10)(value) FROM test</query>
+    <query>SELECT groupSortedArrayWeighted(10)(text) FROM test</query>
+    <drop_query>DROP TABLE IF EXISTS test</drop_query>
+</test>
