@@ -33,8 +33,13 @@ inline T readItem(const IColumn * column, Arena * arena, size_t row)
 }
 
 template <typename T>
-void getFirstNElements(const T * data, int num_elements, int threshold, UInt64 * results)
+void getFirstNElements(const T * data, int num_elements, int threshold, size_t * results)
 {
+    for (int i = 0; i < threshold; i++)
+    {
+        results[i] = 0;
+    }
+
     threshold = std::min(num_elements, threshold);
     int current_max = 0;
     int cur;
@@ -49,9 +54,10 @@ void getFirstNElements(const T * data, int num_elements, int threshold, UInt64 *
         {
             //Move all the higher values 1 position to the right
             for (z = current_max - 1; z >= cur; z--)
-                results[z + 1] = results[z];
-            if (++current_max > threshold)
-                current_max = threshold;
+                results[z] = results[z-1];
+            
+            if (current_max < threshold)
+                ++current_max;
 
             //insert element into the given position
             results[cur] = i;
@@ -123,9 +129,9 @@ public:
         {
             StringRef ref = columns[1]->getRawData();
             TIndex values[batch_size];
-            memcpy(values, ref.data, batch_size * sizeof(UInt64));
-            UInt64 * bestRows = new UInt64[this->threshold];
-            size_t num_results;
+            memcpy(values, ref.data, batch_size * sizeof(TIndex));
+            size_t num_results = std::min(this->threshold, batch_size);
+            size_t *bestRows = new size_t[batch_size];
 
             //First store the first n elements with the column number
             if (if_argument_pos >= 0)
