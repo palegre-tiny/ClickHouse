@@ -65,15 +65,15 @@ void getFirstNElements(const T * data, int num_elements, int threshold, size_t *
     }
 }
 
-template <bool is_plain_column, typename T, bool is_weighted, typename TIndex>
+template <bool is_plain_column, typename T, bool expr_sorted, typename TIndex>
 class AggregateFunctionGroupSortedArray : public IAggregateFunctionDataHelper<
-                                              AggregateFunctionGroupSortedArrayData<T, is_weighted, TIndex>,
-                                              AggregateFunctionGroupSortedArray<is_plain_column, T, is_weighted, TIndex>>
+                                              AggregateFunctionGroupSortedArrayData<T, expr_sorted, TIndex>,
+                                              AggregateFunctionGroupSortedArray<is_plain_column, T, expr_sorted, TIndex>>
 {
 protected:
-    using State = AggregateFunctionGroupSortedArrayData<T, is_weighted, TIndex>;
+    using State = AggregateFunctionGroupSortedArrayData<T, expr_sorted, TIndex>;
     using Base
-        = IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T, is_weighted, TIndex>, AggregateFunctionGroupSortedArray>;
+        = IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T, expr_sorted, TIndex>, AggregateFunctionGroupSortedArray>;
 
     UInt64 threshold;
     DataTypePtr & input_data_type;
@@ -83,7 +83,7 @@ protected:
 
 public:
     AggregateFunctionGroupSortedArray(UInt64 threshold_, const DataTypes & argument_types_, const Array & params)
-        : IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T, is_weighted, TIndex>, AggregateFunctionGroupSortedArray>(
+        : IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T, expr_sorted, TIndex>, AggregateFunctionGroupSortedArray>(
             argument_types_, params)
         , threshold(threshold_)
         , input_data_type(this->argument_types[0])
@@ -96,7 +96,7 @@ public:
         this->data(place).threshold = threshold;
     }
 
-    String getName() const override { return is_weighted ? "groupSortedArrayWeighted" : "groupSortedArray"; }
+    String getName() const override { return "groupSortedArray"; }
 
     DataTypePtr getReturnType() const override { return std::make_shared<DataTypeArray>(input_data_type); }
 
@@ -111,7 +111,7 @@ public:
     void add(AggregateDataPtr __restrict place, const IColumn ** columns, size_t row_num, Arena * arena) const override
     {
         State & data = this->data(place);
-        if constexpr (is_weighted)
+        if constexpr (expr_sorted)
         {
             data.add(readItem<T, is_plain_column>(columns[0], arena, row_num), readItem<TIndex, false>(columns[1], arena, row_num));
         }
@@ -125,7 +125,7 @@ public:
         size_t batch_size, AggregateDataPtr place, const IColumn ** columns, Arena * arena, ssize_t if_argument_pos) const override
     {
         State & data = this->data(place);
-        if constexpr (is_weighted)
+        if constexpr (expr_sorted)
         {
             StringRef ref = columns[1]->getRawData();
             TIndex values[batch_size];

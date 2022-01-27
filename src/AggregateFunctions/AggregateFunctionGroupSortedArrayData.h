@@ -100,7 +100,7 @@ struct AggregateFunctionGroupSortedArrayDataBase
     Storage values;
 };
 
-template <typename T, bool is_weighted, typename TIndex>
+template <typename T, bool expr_sorted, typename TIndex>
 struct AggregateFunctionGroupSortedArrayData
 {
 };

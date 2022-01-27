@@ -19,13 +19,14 @@ If the parameter is omitted, default value 10 is used.
 **Arguments**
 
 -   `x` – The value.
+-   `expr` — Optional. The field or expresion to sort by. If not set values are sorted by themselves. [Integer](../../../sql-reference/data-types/int-uint.md).
 
 **Example**
 
 Gets the first 10 numbers:
 
 ``` sql
-SELECT groupSortedArray(10)(-number) FROM numbers(100)
+SELECT groupSortedArray(10)(number) FROM numbers(100)
 ```
 
 ``` text
@@ -37,16 +38,11 @@ SELECT groupSortedArray(10)(-number) FROM numbers(100)
 Or the last 10:
 
 ``` sql
-SELECT groupSortedArray(10)(-number) FROM numbers(100)
+SELECT groupSortedArray(10)(number, -number) FROM numbers(100)
 ```
 
 ``` text
-┌─groupSortedArray(10)(negate(number))──────┐
-│ [-99,-98,-97,-96,-95,-94,-93,-92,-91,-90] │
-└───────────────────────────────────────────┘
+┌─groupSortedArray(10)(number, negate(number))─┐
+│ [99,98,97,96,95,94,93,92,91,90]              │
+└──────────────────────────────────────────────┘
 ```
-
-
-**See Also**
-
--   [groupSortedArrayWeighted](../../../sql-reference/aggregate-functions/reference/groupsortedarrayweighted.md)
