@@ -58,6 +58,7 @@ namespace
             return new AggregateFunctionGroupSortedArray<true, StringRef, expr_sorted, TIndex>(threshold, argument_types, params);
         }
         else
+        
         {
             return new AggregateFunctionGroupSortedArray<false, StringRef, expr_sorted, TIndex>(threshold, argument_types, params);
         }
@@ -111,11 +112,11 @@ namespace
         else
         {
             assertBinary(name, argument_types);
-            if (!isInteger(argument_types[1]))
+/*            if (!isInteger(argument_types[1]))
                 throw Exception(
                     "The second argument for aggregate function 'groupSortedArray' must have integer type",
                     ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
-        }
+*/        }
 
         if (params.size() == 1)
         {
@@ -135,7 +136,10 @@ namespace
         if (expr_sorted && isUnsignedInteger(argument_types[1]))
             return createAggregateFunctionGroupSortedArrayTyped<expr_sorted, UInt64>(name, argument_types, params, threshold);
         else
-            return createAggregateFunctionGroupSortedArrayTyped<expr_sorted, Int64>(name, argument_types, params, threshold);
+            if (expr_sorted && isInteger(argument_types[1]))
+                return createAggregateFunctionGroupSortedArrayTyped<expr_sorted, Int64>(name, argument_types, params, threshold);
+            else
+                return createAggregateFunctionGroupSortedArrayTyped<expr_sorted, StringRef>(name, argument_types, params, threshold);
     }
 
     AggregateFunctionPtr createAggregateFunctionGroupSortedArray(

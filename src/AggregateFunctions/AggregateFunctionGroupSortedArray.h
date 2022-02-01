@@ -125,37 +125,66 @@ public:
         size_t batch_size, AggregateDataPtr place, const IColumn ** columns, Arena * arena, ssize_t if_argument_pos) const override
     {
         State & data = this->data(place);
+
+
         if constexpr (expr_sorted)
         {
-            StringRef ref = columns[1]->getRawData();
-            TIndex values[batch_size];
-            memcpy(values, ref.data, batch_size * sizeof(TIndex));
-            size_t num_results = std::min(this->threshold, batch_size);
-            size_t * bestRows = new size_t[batch_size];
-
-            //First store the first n elements with the column number
-            if (if_argument_pos >= 0)
+            if constexpr (std::is_same_v<TIndex, StringRef>)
             {
-                TIndex * value_w = values;
-
-                const auto & flags = assert_cast<const ColumnUInt8 &>(*columns[if_argument_pos]).getData();
-                for (size_t i = 0; i < batch_size; ++i)
+                if (if_argument_pos >= 0)
                 {
-                    if (flags[i])
-                        *(value_w++) = values[i];
+                    const auto & flags = assert_cast<const ColumnUInt8 &>(*columns[if_argument_pos]).getData();
+                    for (size_t i = 0; i < batch_size; ++i)
+                    {
+                        if (flags[i])
+                        {
+                            data.add(readItem<T, is_plain_column>(columns[0], arena, i),
+                                     readItem<TIndex, false>(columns[1], arena, i));
+                        }
+                    }
+                }
+                else
+                {
+                    for (size_t i = 0; i < batch_size; ++i)
+                    {
+                        data.add(readItem<T, is_plain_column>(columns[0], arena, i),
+                                 readItem<TIndex, false>(columns[1], arena, i));
+                    }
+                }
+            }
+            else
+            {
+                StringRef ref = columns[1]->getRawData();
+                TIndex values[batch_size];
+                memcpy(values, ref.data, batch_size * sizeof(TIndex));
+                size_t num_results = std::min(this->threshold, batch_size);
+                size_t * bestRows = new size_t[batch_size];
+
+                //First store the first n elements with the column number
+                if (if_argument_pos >= 0)
+                {
+                    TIndex * value_w = values;
+
+                    const auto & flags = assert_cast<const ColumnUInt8 &>(*columns[if_argument_pos]).getData();
+                    for (size_t i = 0; i < batch_size; ++i)
+                    {
+                        if (flags[i])
+                            *(value_w++) = values[i];
+                    }
+
+                    batch_size = value_w - values;
                 }
 
-                batch_size = value_w - values;
-            }
+                num_results = std::min(this->threshold, batch_size);
+                getFirstNElements(values, batch_size, num_results, bestRows);
+                for (size_t i = 0; i < num_results; i++)
+                {
+                    auto row = bestRows[i];
+                    data.add(readItem<T, false>(columns[0], arena, row), values[row]);
+                }
+                delete[] bestRows;
 
-            num_results = std::min(this->threshold, batch_size);
-            getFirstNElements(values, batch_size, num_results, bestRows);
-            for (size_t i = 0; i < num_results; i++)
-            {
-                auto row = bestRows[i];
-                data.add(readItem<T, is_plain_column>(columns[0], arena, row), values[row]);
             }
-            delete[] bestRows;
         }
         else
         {
@@ -179,6 +208,21 @@ public:
             }
         }
     }
+
+#if 0
+    void merge(AggregateDataPtr __restrict , ConstAggregateDataPtr , Arena *) const override
+    {
+    }
+
+    void serialize(ConstAggregateDataPtr __restrict , WriteBuffer & , std::optional<size_t> /* version */) const override
+    {
+    }
+
+    void
+    deserialize(AggregateDataPtr __restrict , ReadBuffer & , std::optional<size_t> /* version  */, Arena *) const override
+    {
+    }
+ #endif
 
     void merge(AggregateDataPtr __restrict place, ConstAggregateDataPtr rhs, Arena *) const override
     {
