@@ -17,6 +17,11 @@ SELECT groupSortedArray(5)(number, text) FROM (select toString(number) as text, 
 
 SELECT groupSortedArray(5)((number,text)) from (SELECT toString(number) as text, number FROM numbers(100));
 
+SELECT groupSortedArray(5)(text,text) from (SELECT toString(number) as text FROM numbers(100));
+
+SELECT groupSortedArray(50)(text,(number,text)) from (SELECT toString(number) as text, number FROM numbers(100));
+
+
 DROP TABLE IF EXISTS test;
 DROP VIEW IF EXISTS mv_test;
 CREATE TABLE test (`n` String, `h` Int64) ENGINE = MergeTree ORDER BY n;

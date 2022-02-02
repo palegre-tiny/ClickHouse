@@ -8,12 +8,12 @@
 
 namespace DB
 {
-template <typename T, bool is_plain_column>
-inline T readItem(const IColumn * column, Arena * arena, size_t row)
+template <typename TColumn, bool is_plain>
+inline TColumn readItem(const IColumn * column, Arena * arena, size_t row)
 {
-    if constexpr (std::is_same_v<T, StringRef>)
+    if constexpr (std::is_same_v<TColumn, StringRef>)
     {
-        if constexpr (is_plain_column)
+        if constexpr (is_plain)
         {
             StringRef str = column->getDataAt(row);
             auto ptr = arena->alloc(str.size);
@@ -28,12 +28,15 @@ inline T readItem(const IColumn * column, Arena * arena, size_t row)
     }
     else
     {
-        return column->getUInt(row);
+        if constexpr (std::is_same_v<TColumn, UInt64>)
+            return column->getUInt(row);
+        else
+            return column->getInt(row);
     }
 }
 
-template <typename T>
-void getFirstNElements(const T * data, int num_elements, int threshold, size_t * results)
+template <typename TColumnA>
+void getFirstNElements(const TColumnA * data, int num_elements, int threshold, size_t * results)
 {
     for (int i = 0; i < threshold; i++)
     {
@@ -65,15 +68,16 @@ void getFirstNElements(const T * data, int num_elements, int threshold, size_t *
     }
 }
 
-template <bool is_plain_column, typename T, bool expr_sorted, typename TIndex>
+template <typename TColumnA, bool is_plain_a, bool use_column_b, typename TColumnB, bool is_plain_b>
 class AggregateFunctionGroupSortedArray : public IAggregateFunctionDataHelper<
-                                              AggregateFunctionGroupSortedArrayData<T, expr_sorted, TIndex>,
-                                              AggregateFunctionGroupSortedArray<is_plain_column, T, expr_sorted, TIndex>>
+                                              AggregateFunctionGroupSortedArrayData<TColumnA, use_column_b, TColumnB>,
+                                              AggregateFunctionGroupSortedArray<TColumnA, is_plain_a, use_column_b, TColumnB, is_plain_b>>
 {
 protected:
-    using State = AggregateFunctionGroupSortedArrayData<T, expr_sorted, TIndex>;
-    using Base
-        = IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T, expr_sorted, TIndex>, AggregateFunctionGroupSortedArray>;
+    using State = AggregateFunctionGroupSortedArrayData<TColumnA, use_column_b, TColumnB>;
+    using Base = IAggregateFunctionDataHelper<
+        AggregateFunctionGroupSortedArrayData<TColumnA, use_column_b, TColumnB>,
+        AggregateFunctionGroupSortedArray>;
 
     UInt64 threshold;
     DataTypePtr & input_data_type;
@@ -83,8 +87,9 @@ protected:
 
 public:
     AggregateFunctionGroupSortedArray(UInt64 threshold_, const DataTypes & argument_types_, const Array & params)
-        : IAggregateFunctionDataHelper<AggregateFunctionGroupSortedArrayData<T, expr_sorted, TIndex>, AggregateFunctionGroupSortedArray>(
-            argument_types_, params)
+        : IAggregateFunctionDataHelper<
+            AggregateFunctionGroupSortedArrayData<TColumnA, use_column_b, TColumnB>,
+            AggregateFunctionGroupSortedArray>(argument_types_, params)
         , threshold(threshold_)
         , input_data_type(this->argument_types[0])
     {
@@ -102,7 +107,7 @@ public:
 
     bool allocatesMemoryInArena() const override
     {
-        if constexpr (std::is_same_v<T, StringRef>)
+        if constexpr (std::is_same_v<TColumnA, StringRef>)
             return true;
         else
             return false;
@@ -111,13 +116,14 @@ public:
     void add(AggregateDataPtr __restrict place, const IColumn ** columns, size_t row_num, Arena * arena) const override
     {
         State & data = this->data(place);
-        if constexpr (expr_sorted)
+        if constexpr (use_column_b)
         {
-            data.add(readItem<T, is_plain_column>(columns[0], arena, row_num), readItem<TIndex, false>(columns[1], arena, row_num));
+            data.add(
+                readItem<TColumnA, is_plain_a>(columns[0], arena, row_num), readItem<TColumnB, is_plain_b>(columns[1], arena, row_num));
         }
         else
         {
-            data.add(readItem<T, is_plain_column>(columns[0], arena, row_num));
+            data.add(readItem<TColumnA, is_plain_a>(columns[0], arena, row_num));
         }
     }
 
@@ -126,51 +132,43 @@ public:
     {
         State & data = this->data(place);
 
-
-        if constexpr (expr_sorted)
-        {
-            if constexpr (std::is_same_v<TIndex, StringRef>)
+        auto fill = [&columns, if_argument_pos, batch_size](auto func) {
+            if (if_argument_pos > 0)
             {
-                if (if_argument_pos >= 0)
-                {
-                    const auto & flags = assert_cast<const ColumnUInt8 &>(*columns[if_argument_pos]).getData();
-                    for (size_t i = 0; i < batch_size; ++i)
-                    {
-                        if (flags[i])
-                        {
-                            data.add(readItem<T, is_plain_column>(columns[0], arena, i),
-                                     readItem<TIndex, false>(columns[1], arena, i));
-                        }
-                    }
-                }
-                else
-                {
-                    for (size_t i = 0; i < batch_size; ++i)
-                    {
-                        data.add(readItem<T, is_plain_column>(columns[0], arena, i),
-                                 readItem<TIndex, false>(columns[1], arena, i));
-                    }
-                }
+                const auto & flags = assert_cast<const ColumnUInt8 &>(*columns[if_argument_pos]).getData();
+                for (size_t i = 0; i < batch_size; ++i)
+                    if (flags[i])
+                        func(i);
+            }
+            else
+            {
+                for (size_t i = 0; i < batch_size; ++i)
+                    func(i);
+            }
+        };
+
+        if constexpr (use_column_b)
+        {
+            if constexpr (std::is_same_v<TColumnB, StringRef>)
+            {
+                fill([&columns, &data, &arena](auto row) {
+                    data.add(
+                        readItem<TColumnA, is_plain_a>(columns[0], arena, row), readItem<TColumnB, is_plain_b>(columns[1], arena, row));
+                });
             }
             else
             {
                 StringRef ref = columns[1]->getRawData();
-                TIndex values[batch_size];
-                memcpy(values, ref.data, batch_size * sizeof(TIndex));
+                TColumnB values[batch_size];
+                memcpy(values, ref.data, batch_size * sizeof(TColumnB));
                 size_t num_results = std::min(this->threshold, batch_size);
                 size_t * bestRows = new size_t[batch_size];
 
                 //First store the first n elements with the column number
                 if (if_argument_pos >= 0)
                 {
-                    TIndex * value_w = values;
-
-                    const auto & flags = assert_cast<const ColumnUInt8 &>(*columns[if_argument_pos]).getData();
-                    for (size_t i = 0; i < batch_size; ++i)
-                    {
-                        if (flags[i])
-                            *(value_w++) = values[i];
-                    }
+                    TColumnB * value_w = values;
+                    fill([&values, &value_w](auto row) { *(value_w++) = values[row]; });
 
                     batch_size = value_w - values;
                 }
@@ -180,49 +178,16 @@ public:
                 for (size_t i = 0; i < num_results; i++)
                 {
                     auto row = bestRows[i];
-                    data.add(readItem<T, false>(columns[0], arena, row), values[row]);
+                    data.add(readItem<TColumnA, is_plain_a>(columns[0], arena, row), values[row]);
                 }
                 delete[] bestRows;
-
             }
         }
         else
         {
-            if (if_argument_pos >= 0)
-            {
-                const auto & flags = assert_cast<const ColumnUInt8 &>(*columns[if_argument_pos]).getData();
-                for (size_t i = 0; i < batch_size; ++i)
-                {
-                    if (flags[i])
-                    {
-                        data.add(readItem<T, is_plain_column>(columns[0], arena, i));
-                    }
-                }
-            }
-            else
-            {
-                for (size_t i = 0; i < batch_size; ++i)
-                {
-                    data.add(readItem<T, is_plain_column>(columns[0], arena, i));
-                }
-            }
+            fill([&columns, &data, &arena](auto row) { data.add(readItem<TColumnA, is_plain_a>(columns[0], arena, row)); });
         }
     }
-
-#if 0
-    void merge(AggregateDataPtr __restrict , ConstAggregateDataPtr , Arena *) const override
-    {
-    }
-
-    void serialize(ConstAggregateDataPtr __restrict , WriteBuffer & , std::optional<size_t> /* version */) const override
-    {
-    }
-
-    void
-    deserialize(AggregateDataPtr __restrict , ReadBuffer & , std::optional<size_t> /* version  */, Arena *) const override
-    {
-    }
- #endif
 
     void merge(AggregateDataPtr __restrict place, ConstAggregateDataPtr rhs, Arena *) const override
     {
@@ -251,10 +216,10 @@ public:
         IColumn & data_to = arr_to.getData();
         for (auto value : values)
         {
-            if constexpr (std::is_same_v<T, StringRef>)
+            if constexpr (std::is_same_v<TColumnA, StringRef>)
             {
                 auto str = State::itemValue(value);
-                if constexpr (is_plain_column)
+                if constexpr (is_plain_a)
                 {
                     data_to.insertData(str.data, str.size);
                 }
