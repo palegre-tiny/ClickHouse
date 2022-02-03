@@ -35,8 +35,8 @@ inline TColumn readItem(const IColumn * column, Arena * arena, size_t row)
     }
 }
 
-template <typename TColumnA>
-void getFirstNElements(const TColumnA * data, int num_elements, int threshold, size_t * results)
+template <typename TColumn>
+size_t getFirstNElements(const TColumn *data, int num_elements, int threshold, size_t *results, const UInt8 *filter = nullptr)
 {
     for (int i = 0; i < threshold; i++)
     {
@@ -49,14 +49,20 @@ void getFirstNElements(const TColumnA * data, int num_elements, int threshold, s
     int z;
     for (int i = 0; i < num_elements; i++)
     {
+        if (filter && (filter[i]==0))
+            continue;
+
         //Starting from the highest values and we look for the immediately lower than the given one
-        for (cur = current_max; cur > 0 && (data[i] < data[results[cur - 1]]); cur--)
-            ;
+        for (cur = current_max; cur > 0; cur--)
+        {
+            if (!(data[i] < data[results[cur - 1]]))
+                break;
+        }
 
         if (cur < threshold)
         {
             //Move all the higher values 1 position to the right
-            for (z = current_max - 1; z >= cur; z--)
+            for (z = current_max - 1; z > cur; z--)
                 results[z] = results[z - 1];
 
             if (current_max < threshold)
@@ -66,6 +72,8 @@ void getFirstNElements(const TColumnA * data, int num_elements, int threshold, s
             results[cur] = i;
         }
     }
+
+    return current_max;
 }
 
 template <typename TColumnA, bool is_plain_a, bool use_column_b, typename TColumnB, bool is_plain_b>
@@ -159,28 +167,25 @@ public:
             else
             {
                 StringRef ref = columns[1]->getRawData();
-                TColumnB values[batch_size];
-                memcpy(values, ref.data, batch_size * sizeof(TColumnB));
+                const TColumnB *values = reinterpret_cast<const TColumnB*>(ref.data);
                 size_t num_results = std::min(this->threshold, batch_size);
-                size_t * bestRows = new size_t[batch_size];
+                std::vector<size_t> bestRows(threshold);
+                
+                const UInt8 *filter = nullptr;
+                StringRef refFilter;
 
                 //First store the first n elements with the column number
                 if (if_argument_pos >= 0)
                 {
-                    TColumnB * value_w = values;
-                    fill([&values, &value_w](auto row) { *(value_w++) = values[row]; });
-
-                    batch_size = value_w - values;
+                    refFilter = columns[if_argument_pos]->getRawData();
+                    filter = reinterpret_cast<const UInt8*>(refFilter.data);
                 }
 
-                num_results = std::min(this->threshold, batch_size);
-                getFirstNElements(values, batch_size, num_results, bestRows);
-                for (size_t i = 0; i < num_results; i++)
+                num_results = getFirstNElements(values, batch_size, num_results, bestRows.data(), filter);
+                for (auto row : bestRows)
                 {
-                    auto row = bestRows[i];
                     data.add(readItem<TColumnA, is_plain_a>(columns[0], arena, row), values[row]);
                 }
-                delete[] bestRows;
             }
         }
         else

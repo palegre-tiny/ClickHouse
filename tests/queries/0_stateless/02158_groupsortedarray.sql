@@ -37,3 +37,7 @@ INSERT INTO test VALUES ('pablo',1)('pablo', 2)('luis', 1)('luis', 3)('pablo', 5
 SELECT n, groupSortedArrayMerge(2)(h) from mv_test GROUP BY n;
 DROP TABLE test;
 DROP VIEW mv_test;
+
+SELECT groupSortedArrayIf(5)(number, number, number>3) from numbers(100);
+SELECT groupSortedArrayIf(5)(number, toString(number), number>3) from numbers(100);
+SELECT groupSortedArrayIf(5)(toString(number), number>3) from numbers(100);
