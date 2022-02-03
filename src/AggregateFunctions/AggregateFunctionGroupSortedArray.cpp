@@ -162,9 +162,9 @@ namespace
     }
 }
 
-    void registerAggregateFunctionGroupSortedArray(AggregateFunctionFactory & factory)
-    {
-        AggregateFunctionProperties properties = {.returns_default_when_only_null = false, .is_order_dependent = true};
-        factory.registerFunction("groupSortedArray", {createAggregateFunctionGroupSortedArray, properties});
-    }
+void registerAggregateFunctionGroupSortedArray(AggregateFunctionFactory & factory)
+{
+    AggregateFunctionProperties properties = {.returns_default_when_only_null = false, .is_order_dependent = true};
+    factory.registerFunction("groupSortedArray", {createAggregateFunctionGroupSortedArray, properties});
+}
 }

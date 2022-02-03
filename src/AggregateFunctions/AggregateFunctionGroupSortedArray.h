@@ -36,7 +36,7 @@ inline TColumn readItem(const IColumn * column, Arena * arena, size_t row)
 }
 
 template <typename TColumn>
-size_t getFirstNElements(const TColumn *data, int num_elements, int threshold, size_t *results, const UInt8 *filter = nullptr)
+size_t getFirstNElements(const TColumn * data, int num_elements, int threshold, size_t * results, const UInt8 * filter = nullptr)
 {
     for (int i = 0; i < threshold; i++)
     {
@@ -49,7 +49,7 @@ size_t getFirstNElements(const TColumn *data, int num_elements, int threshold, s
     int z;
     for (int i = 0; i < num_elements; i++)
     {
-        if (filter && (filter[i]==0))
+        if (filter && (filter[i] == 0))
             continue;
 
         //Starting from the highest values and we look for the immediately lower than the given one
@@ -135,62 +135,59 @@ public:
         }
     }
 
+    template <typename TColumn, bool is_plain, typename TFunc>
+    void
+    forFirstRows(size_t batch_size, const IColumn ** columns, size_t data_column, Arena * arena, ssize_t if_argument_pos, TFunc func) const
+    {
+        const TColumn * values = nullptr;
+        std::unique_ptr<std::vector<TColumn>> values_vector;
+        std::vector<size_t> best_rows(threshold);
+
+        if constexpr (std::is_same_v<TColumn, StringRef>)
+        {
+            values_vector.reset(new std::vector<TColumn>(batch_size));
+            for (size_t i = 0; i < batch_size; i++)
+                (*values_vector)[i] = readItem<TColumn, is_plain>(columns[data_column], arena, i);
+            values = (*values_vector).data();
+        }
+        else
+        {
+            StringRef ref = columns[data_column]->getRawData();
+            values = reinterpret_cast<const TColumn *>(ref.data);
+        }
+
+        const UInt8 * filter = nullptr;
+        StringRef refFilter;
+
+        if (if_argument_pos >= 0)
+        {
+            refFilter = columns[if_argument_pos]->getRawData();
+            filter = reinterpret_cast<const UInt8 *>(refFilter.data);
+        }
+
+        size_t num_elements = getFirstNElements(values, batch_size, threshold, best_rows.data(), filter);
+        for (size_t i = 0; i < num_elements; i++)
+        {
+            func(best_rows[i], values);
+        }
+    }
+
     void addBatchSinglePlace(
         size_t batch_size, AggregateDataPtr place, const IColumn ** columns, Arena * arena, ssize_t if_argument_pos) const override
     {
         State & data = this->data(place);
 
-        auto fill = [&columns, if_argument_pos, batch_size](auto func) {
-            if (if_argument_pos > 0)
-            {
-                const auto & flags = assert_cast<const ColumnUInt8 &>(*columns[if_argument_pos]).getData();
-                for (size_t i = 0; i < batch_size; ++i)
-                    if (flags[i])
-                        func(i);
-            }
-            else
-            {
-                for (size_t i = 0; i < batch_size; ++i)
-                    func(i);
-            }
-        };
-
         if constexpr (use_column_b)
         {
-            if constexpr (std::is_same_v<TColumnB, StringRef>)
-            {
-                fill([&columns, &data, &arena](auto row) {
-                    data.add(
-                        readItem<TColumnA, is_plain_a>(columns[0], arena, row), readItem<TColumnB, is_plain_b>(columns[1], arena, row));
-                });
-            }
-            else
-            {
-                StringRef ref = columns[1]->getRawData();
-                const TColumnB *values = reinterpret_cast<const TColumnB*>(ref.data);
-                size_t num_results = std::min(this->threshold, batch_size);
-                std::vector<size_t> bestRows(threshold);
-                
-                const UInt8 *filter = nullptr;
-                StringRef refFilter;
-
-                //First store the first n elements with the column number
-                if (if_argument_pos >= 0)
-                {
-                    refFilter = columns[if_argument_pos]->getRawData();
-                    filter = reinterpret_cast<const UInt8*>(refFilter.data);
-                }
-
-                num_results = getFirstNElements(values, batch_size, num_results, bestRows.data(), filter);
-                for (auto row : bestRows)
-                {
+            forFirstRows<TColumnB, is_plain_b>(
+                batch_size, columns, 1, arena, if_argument_pos, [columns, &arena, &data](size_t row, const TColumnB * values) {
                     data.add(readItem<TColumnA, is_plain_a>(columns[0], arena, row), values[row]);
-                }
-            }
+                });
         }
         else
         {
-            fill([&columns, &data, &arena](auto row) { data.add(readItem<TColumnA, is_plain_a>(columns[0], arena, row)); });
+            forFirstRows<TColumnA, is_plain_a>(
+                batch_size, columns, 0, arena, if_argument_pos, [&data](size_t row, const TColumnA * values) { data.add(values[row]); });
         }
     }
 
