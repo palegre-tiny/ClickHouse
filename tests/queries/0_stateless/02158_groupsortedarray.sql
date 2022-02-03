@@ -13,8 +13,6 @@ SELECT groupSortedArray(5)(text) FROM (select toString(number) as text from numb
 
 SELECT groupSortedArray(5)(text, -number) FROM (select toString(number) as text, number from numbers(10));
 
-SELECT groupSortedArray(5)(number, text) FROM (select toString(number) as text, number from numbers(10)); -- { serverError 43 }
-
 SELECT groupSortedArray(5)((number,text)) from (SELECT toString(number) as text, number FROM numbers(100));
 
 SELECT groupSortedArray(5)(text,text) from (SELECT toString(number) as text FROM numbers(100));
