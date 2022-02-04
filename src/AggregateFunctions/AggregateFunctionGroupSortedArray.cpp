@@ -129,6 +129,10 @@ namespace
 
             threshold = k;
         }
+        else if (params.size() != 0)
+        {
+            throw Exception("Aggregate function " + name + " only supports 1 parameter.", ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH);
+        }
 
         if (argument_types.size() == 2)
         {
