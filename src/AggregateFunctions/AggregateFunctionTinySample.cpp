@@ -12,33 +12,32 @@ namespace DB
 
 namespace ErrorCodes
 {
-    extern const int ARGUMENT_OUT_OF_BOUND;
-    extern const int ILLEGAL_TYPE_OF_ARGUMENT;
     extern const int NUMBER_OF_ARGUMENTS_DOESNT_MATCH;
+    extern const int ILLEGAL_TYPE_OF_ARGUMENT;
 }
 
-struct TinySumData
+template <typename T>struct TinySumData
 {
-    UInt64 total = 0;
+    T total = 0;
 };
 
-class TinySum : public IAggregateFunctionDataHelper<TinySumData, TinySum>
+template <typename T>class TinySum : public IAggregateFunctionDataHelper<TinySumData<T>, TinySum<T>>
 {
 public:
     TinySum(const DataTypes & argument_types_, const Array & params)
-        : IAggregateFunctionDataHelper<TinySumData, TinySum>(argument_types_, params)
+        : IAggregateFunctionDataHelper<TinySumData<T>, TinySum<T>>(argument_types_, params)
     {
     }
 
-    String getName() const override { return "tinySum"; }
+    String getName() const override { return "TinySum"; }
 
-    DataTypePtr getReturnType() const override { return std::make_shared<DataTypeNumber<UInt64>>(); }
+    DataTypePtr getReturnType() const override { return std::make_shared<DataTypeNumber<T>>(); }
 
     bool allocatesMemoryInArena() const override { return false;}
 
     void add(AggregateDataPtr __restrict place, const IColumn **columns, size_t row_num, Arena *) const override
     {
-        UInt64 value = assert_cast<const ColumnVector<UInt64> &>(*columns[0]).getData()[row_num];
+        T value = assert_cast<const ColumnVector<T> &>(*columns[0]).getData()[row_num];
         this->data(place).total += value;
     }
    
@@ -50,7 +49,6 @@ public:
     NO_SERIALIZE
 };
 
-
 AggregateFunctionPtr createAggregateFunction_TinySum(
         const std::string &name, const DataTypes & argument_types, const Array & params, const Settings *)
 {
@@ -58,10 +56,29 @@ AggregateFunctionPtr createAggregateFunction_TinySum(
         throw Exception("Aggregate function " + name + " requires one parameter.", ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH);
 
     WhichDataType which(argument_types[0]);
-    if (which.idx == TypeIndex::UInt64)
-        return AggregateFunctionPtr(new TinySum(argument_types, params));
 
-    throw Exception("Invalid parameter type. Function " + name + " only supports UInt64", ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
+    if (which.idx == TypeIndex::UInt8)
+        return AggregateFunctionPtr(new TinySum<UInt8>(argument_types, params));
+    if (which.idx == TypeIndex::UInt16)
+        return AggregateFunctionPtr(new TinySum<UInt16>(argument_types, params));
+    if (which.idx == TypeIndex::UInt32)
+        return AggregateFunctionPtr(new TinySum<UInt32>(argument_types, params));
+    if (which.idx == TypeIndex::UInt64)
+        return AggregateFunctionPtr(new TinySum<UInt64>(argument_types, params));
+    if (which.idx == TypeIndex::Int8)
+        return AggregateFunctionPtr(new TinySum<UInt8>(argument_types, params));
+    if (which.idx == TypeIndex::Int16)
+        return AggregateFunctionPtr(new TinySum<Int16>(argument_types, params));
+    if (which.idx == TypeIndex::Int32)
+        return AggregateFunctionPtr(new TinySum<Int32>(argument_types, params));
+    if (which.idx == TypeIndex::Int64)
+        return AggregateFunctionPtr(new TinySum<Int64>(argument_types, params));
+    if (which.idx == TypeIndex::Float32)
+        return AggregateFunctionPtr(new TinySum<Float32>(argument_types, params));
+    if (which.idx == TypeIndex::Float64)
+        return AggregateFunctionPtr(new TinySum<Float64>(argument_types, params));
+
+    throw Exception("Invalid parameter type. Function " + name + " only supports Numeric Types", ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
 }
 
 void registerAggregateFunctionGroupTinySamples(AggregateFunctionFactory & factory)
