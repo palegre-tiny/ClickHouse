@@ -45,13 +45,24 @@ public:
     }
 
     void addBatchSinglePlace(
-        size_t batch_size, AggregateDataPtr place, const IColumn ** columns, Arena *, ssize_t ) const override
+        size_t batch_size, AggregateDataPtr place, const IColumn ** columns, Arena *, ssize_t if_argument_pos) const override
     {
         StringRef ref = columns[0]->getRawData();
         const T *values = reinterpret_cast<const T *>(ref.data);
 
-        for (size_t i = 0; i < batch_size; i ++)
-            this->data(place).total + values[i];
+        if (if_argument_pos >= 0)
+        {
+            StringRef refFilter = columns[if_argument_pos]->getRawData();
+            const UInt8 * filter = reinterpret_cast<const UInt8 *>(refFilter.data);
+            for (size_t i = 0; i < batch_size; i ++)
+                if (filter[i])
+                    this->data(place).total += values[i];
+        }
+        else
+        {
+            for (size_t i = 0; i < batch_size; i ++)
+                this->data(place).total += values[i];
+        }
     }
    
     void insertResultInto(AggregateDataPtr __restrict place, IColumn & to, Arena *) const override
