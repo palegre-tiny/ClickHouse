@@ -43,6 +43,16 @@ public:
         T value = assert_cast<const ColumnVector<T> &>(*columns[0]).getData()[row_num];
         this->data(place).total += value;
     }
+
+    void addBatchSinglePlace(
+        size_t batch_size, AggregateDataPtr place, const IColumn ** columns, Arena *, ssize_t ) const override
+    {
+        StringRef ref = columns[0]->getRawData();
+        const T *values = reinterpret_cast<const T *>(ref.data);
+
+        for (size_t i = 0; i < batch_size; i ++)
+            this->data(place).total + values[i];
+    }
    
     void insertResultInto(AggregateDataPtr __restrict place, IColumn & to, Arena *) const override
     {
