@@ -4,9 +4,11 @@
 #include <DataTypes/DataTypesNumber.h>
 #include <AggregateFunctions/Helpers.h>
 
-#define NO_SERIALIZE    void merge(AggregateDataPtr __restrict , ConstAggregateDataPtr , Arena *) const override{} \
-                        void serialize(ConstAggregateDataPtr __restrict , WriteBuffer &, std::optional<size_t>) const override{} \
-                        void deserialize(AggregateDataPtr __restrict , ReadBuffer &, std::optional<size_t> , Arena * ) const override{}
+#include <IO/ReadBuffer.h>
+#include <IO/ReadHelpers.h>
+#include <IO/VarInt.h>
+#include <IO/WriteBuffer.h>
+#include <IO/WriteHelpers.h>
 
 namespace DB
 {
@@ -47,7 +49,38 @@ public:
         assert_cast<ColumnUInt64 &>(to).getData().push_back(this->data(place).total);
     }
 
-    NO_SERIALIZE
+    void merge(AggregateDataPtr __restrict place, ConstAggregateDataPtr rhs, Arena *) const override
+    {
+        this->data(place).total += this->data(rhs).total;
+    }
+
+    void serialize(ConstAggregateDataPtr __restrict place, WriteBuffer &buf, std::optional<size_t>) const override
+    {
+        if constexpr (std::numeric_limits<T>::is_signed)
+        {
+            writeVarInt(Int64(this->data(place).total), buf);
+        }
+        else
+        {
+            writeVarUInt(UInt64(this->data(place).total), buf);
+        }
+    }
+    
+    void deserialize(AggregateDataPtr __restrict place, ReadBuffer &buf, std::optional<size_t> , Arena * ) const override
+    {
+        if constexpr (std::numeric_limits<T>::is_signed)
+        {
+            DB::Int64 val;
+            readVarT(val, buf);
+            this->data(place).total = val;
+        }
+        else
+        {
+            DB::UInt64 val;
+            readVarT(val, buf);
+            this->data(place).total = val;
+        }
+    }
 };
 
 AggregateFunctionPtr createAggregateFunction_TinySum(
