@@ -2,6 +2,7 @@
 #include <AggregateFunctions/AggregateFunctionFactory.h>
 #include <AggregateFunctions/IAggregateFunction.h>
 #include <DataTypes/DataTypesNumber.h>
+#include <AggregateFunctions/Helpers.h>
 
 #define NO_SERIALIZE    void merge(AggregateDataPtr __restrict , ConstAggregateDataPtr , Arena *) const override{} \
                         void serialize(ConstAggregateDataPtr __restrict , WriteBuffer &, std::optional<size_t>) const override{} \
@@ -57,26 +58,11 @@ AggregateFunctionPtr createAggregateFunction_TinySum(
 
     WhichDataType which(argument_types[0]);
 
-    if (which.idx == TypeIndex::UInt8)
-        return AggregateFunctionPtr(new TinySum<UInt8>(argument_types, params));
-    if (which.idx == TypeIndex::UInt16)
-        return AggregateFunctionPtr(new TinySum<UInt16>(argument_types, params));
-    if (which.idx == TypeIndex::UInt32)
-        return AggregateFunctionPtr(new TinySum<UInt32>(argument_types, params));
-    if (which.idx == TypeIndex::UInt64)
-        return AggregateFunctionPtr(new TinySum<UInt64>(argument_types, params));
-    if (which.idx == TypeIndex::Int8)
-        return AggregateFunctionPtr(new TinySum<UInt8>(argument_types, params));
-    if (which.idx == TypeIndex::Int16)
-        return AggregateFunctionPtr(new TinySum<Int16>(argument_types, params));
-    if (which.idx == TypeIndex::Int32)
-        return AggregateFunctionPtr(new TinySum<Int32>(argument_types, params));
-    if (which.idx == TypeIndex::Int64)
-        return AggregateFunctionPtr(new TinySum<Int64>(argument_types, params));
-    if (which.idx == TypeIndex::Float32)
-        return AggregateFunctionPtr(new TinySum<Float32>(argument_types, params));
-    if (which.idx == TypeIndex::Float64)
-        return AggregateFunctionPtr(new TinySum<Float64>(argument_types, params));
+#define DISPATCH(TYPE) \
+    if (which.idx == TypeIndex::TYPE) \
+        return AggregateFunctionPtr(new TinySum<TYPE>(argument_types, params));
+    FOR_NUMERIC_TYPES(DISPATCH)
+#undef DISPATCH
 
     throw Exception("Invalid parameter type. Function " + name + " only supports Numeric Types", ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
 }
