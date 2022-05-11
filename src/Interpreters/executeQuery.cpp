@@ -68,6 +68,7 @@
 #include <base/demangle.h>
 
 #include <random>
+#include <Interpreters/UnionSelectOptimizerVisitor.h>
 
 
 namespace ProfileEvents
@@ -440,6 +441,7 @@ static std::tuple<ASTPtr, BlockIO> executeQueryImpl(
 
         /// TODO: parser should fail early when max_query_size limit is reached.
         ast = parseQuery(parser, begin, end, "", max_query_size, settings.max_parser_depth);
+        UnionSelectOptimizerVisitor::visit(ast);
 
         if (auto txn = context->getCurrentTransaction())
         {
