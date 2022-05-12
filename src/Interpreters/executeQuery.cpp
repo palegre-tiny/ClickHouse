@@ -441,7 +441,6 @@ static std::tuple<ASTPtr, BlockIO> executeQueryImpl(
 
         /// TODO: parser should fail early when max_query_size limit is reached.
         ast = parseQuery(parser, begin, end, "", max_query_size, settings.max_parser_depth);
-        UnionSelectOptimizerVisitor::visit(ast);
 
         if (auto txn = context->getCurrentTransaction())
         {
@@ -567,6 +566,12 @@ static std::tuple<ASTPtr, BlockIO> executeQueryImpl(
             /// Normalize SelectWithUnionQuery
             NormalizeSelectWithUnionQueryVisitor::Data data{context->getSettingsRef().union_default_mode};
             NormalizeSelectWithUnionQueryVisitor{data}.visit(ast);
+        }
+
+        /// Remove redundant queries
+        if (settings.remove_redundant_select_asterisk_from)
+        {
+            UnionSelectOptimizerVisitor::visit(ast);
         }
 
         /// Check the limits.
