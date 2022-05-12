@@ -68,6 +68,7 @@
 #include <base/demangle.h>
 
 #include <random>
+#include <Interpreters/UnionSelectOptimizerVisitor.h>
 
 
 namespace ProfileEvents
@@ -565,6 +566,12 @@ static std::tuple<ASTPtr, BlockIO> executeQueryImpl(
             /// Normalize SelectWithUnionQuery
             NormalizeSelectWithUnionQueryVisitor::Data data{context->getSettingsRef().union_default_mode};
             NormalizeSelectWithUnionQueryVisitor{data}.visit(ast);
+        }
+
+        /// Remove redundant queries
+        if (settings.remove_redundant_select_asterisk_from)
+        {
+            UnionSelectOptimizerVisitor::visit(ast);
         }
 
         /// Check the limits.
